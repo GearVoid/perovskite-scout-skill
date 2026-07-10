@@ -1,4 +1,4 @@
-# perovskite-scout（Claude Code 入口）
+# Perovskite Scout v0.1.0（Claude Code 入口）
 
 钙钛矿光伏情报雷达。论文(arXiv) + 产业(行业 RSS) 双 feed，机器判级后生成微信图文并校验投递。
 

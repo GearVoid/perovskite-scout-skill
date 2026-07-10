@@ -1,4 +1,4 @@
-# openclaw 配置说明（钙钛矿情报雷达 MVP+）
+# openclaw 配置说明（Perovskite Scout v0.1.0）
 
 外部调度系统只需做两件事：**定时调用 `deliver.py`**，再按 manifest 状态投递。
 

@@ -1,4 +1,4 @@
-# perovskite-scout — 钙钛矿情报雷达 MVP
+# Perovskite Scout — 钙钛矿情报雷达 v0.1.0
 
 可信源钙钛矿科研情报雷达。定时抓取 arXiv 论文 → 机器相关性过滤 → 机器可信度分级 → 输出纯文本简报 + 微信图片卡片。
 
