@@ -304,8 +304,34 @@ def draw_industry(draw: ImageDraw.ImageDraw, items: list[dict], y: int) -> int:
     return y
 
 
-def rounded_rectangle(draw, box, radius, fill, outline=None, width=1):
-    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+def paste_smooth_rounded_rectangle(
+    img: Image.Image,
+    box: list[int],
+    radius: int,
+    fill: tuple[int, int, int],
+    outline: tuple[int, int, int] | None = None,
+    width: int = 1,
+) -> None:
+    """Paste an anti-aliased rounded rectangle onto the base image."""
+    scale = 4
+    x0, y0, x1, y1 = [int(v) for v in box]
+    w, h = x1 - x0, y1 - y0
+    if w <= 0 or h <= 0:
+        return
+
+    layer = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
+    layer_draw = ImageDraw.Draw(layer)
+    scaled_box = [0, 0, w * scale - 1, h * scale - 1]
+    layer_draw.rounded_rectangle(
+        scaled_box,
+        radius=radius * scale,
+        fill=(*fill, 255),
+        outline=(*outline, 255) if outline else None,
+        width=width * scale,
+    )
+    resample = getattr(Image, "Resampling", Image).LANCZOS
+    layer = layer.resize((w, h), resample)
+    img.paste(layer, (x0, y0), layer)
 
 
 def add_paper_texture(img: Image.Image) -> None:
@@ -361,7 +387,7 @@ def draw_header(draw: ImageDraw.ImageDraw, today: str) -> None:
     draw.text((782, 176), "verified papers", font=small_font, fill=MUTED)
 
 
-def draw_item(draw: ImageDraw.ImageDraw, item: dict, idx: int, y: int) -> int:
+def draw_item(img: Image.Image, draw: ImageDraw.ImageDraw, item: dict, idx: int, y: int) -> int:
     num_font = load_font(42, "serif")
     title_font = load_font(28, "bold")
     meta_font = load_font(20, "body")
@@ -381,7 +407,7 @@ def draw_item(draw: ImageDraw.ImageDraw, item: dict, idx: int, y: int) -> int:
     tier = str(item.get("provenance_tier", "T?"))[:2]
     tier_color = TIER_COLORS.get(tier, GREY)
     pill = [content_x, y + 12, content_x + 58, y + 48]
-    rounded_rectangle(draw, pill, 18, fill=tier_color)
+    paste_smooth_rounded_rectangle(img, pill, 18, fill=tier_color)
     draw.text(
         (pill[0] + (58 - text_w(tier_font, tier)) / 2, pill[1] + 5),
         tier,
@@ -422,7 +448,7 @@ def render_pil(top: list[dict], today: str) -> list[Path]:
 
     y = 470
     for idx, item in enumerate(top, 1):
-        y = draw_item(draw, item, idx, y)
+        y = draw_item(img, draw, item, idx, y)
 
     y = draw_industry(draw, load_industry_top(), y)
 
