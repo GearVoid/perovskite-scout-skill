@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -112,6 +114,35 @@ class DeliveryTransportTests(unittest.TestCase):
         self.assertIn("started_at", metadata)
         self.assertGreater(metadata["expires_at_epoch"], 0)
         lock.release()
+
+    def test_expired_lock_with_live_local_owner_is_not_recovered(self):
+        self.delivery_dir.mkdir()
+        lock_path = self.delivery_dir / deliver.LOCK_FILENAME
+        lock_path.write_text(json.dumps({
+            "pid": os.getpid(),
+            "hostname": socket.gethostname(),
+            "token": "live-owner",
+            "expires_at_epoch": 0,
+        }), encoding="utf-8")
+
+        with self.assertRaises(deliver.DeliveryLockError):
+            deliver.DeliveryLock(lock_path, 60).acquire()
+        self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8"))["token"], "live-owner")
+
+    def test_old_owner_release_does_not_remove_replacement_lock(self):
+        lock = deliver.DeliveryLock(self.delivery_dir / deliver.LOCK_FILENAME, 60)
+        lock.acquire()
+        replacement = {
+            "pid": 99999,
+            "hostname": "other-host",
+            "token": "replacement-owner",
+            "expires_at_epoch": 9999999999,
+        }
+        lock.path.write_text(json.dumps(replacement), encoding="utf-8")
+
+        lock.release()
+        self.assertTrue(lock.path.exists())
+        self.assertEqual(json.loads(lock.path.read_text(encoding="utf-8"))["token"], "replacement-owner")
 
     def test_delivery_id_ignores_discovery_timestamps(self):
         with ExitStack() as stack:

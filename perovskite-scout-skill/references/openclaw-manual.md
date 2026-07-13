@@ -16,7 +16,7 @@
 
 | `status` | 动作 |
 |----------|------|
-| `ready` | 发 `card.png` + `message-compact.txt`；若短版不存在再回退 `message.txt` |
+| `ready` | **先发** `card.png`，**紧接着发** `message-compact.txt`；图片与短版用 01–07 对应，若短版不存在再回退 `message.txt` |
 | `skipped` | 不发送（本轮无新内容，旧文件已清空） |
 | `preparing` | 组包中的瞬时状态；不发送、不告警，等待命令结束后重读 |
 | 命令退出码非 0 | 不发正文，发错误通知 |

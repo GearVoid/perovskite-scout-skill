@@ -162,6 +162,57 @@ class IndustryHealthTests(unittest.TestCase):
             state = json.loads((root / "state-industry.json").read_text(encoding="utf-8"))
             self.assertEqual(state["health"]["critical-rss"]["consecutive_failures"], 1)
 
+    def test_rebuild_with_source_error_preserves_existing_dedup_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_config(root)
+            old_state = {
+                "seen_titles": ["old title"],
+                "seen_urls": ["https://example.invalid/old"],
+            }
+            (root / "state-industry.json").write_text(json.dumps(old_state), encoding="utf-8")
+            with ExitStack() as stack:
+                for item in self.industry_paths(root):
+                    stack.enter_context(item)
+                stack.enter_context(patch.object(discover_industry, "fetch", side_effect=OSError("offline mock")))
+                stack.enter_context(patch.object(sys, "argv", ["discover_industry.py", "--rebuild"]))
+                self.assertEqual(discover_industry.main(), 1)
+            self.assertEqual(
+                json.loads((root / "state-industry.json").read_text(encoding="utf-8")),
+                old_state,
+            )
+
+    def test_critical_source_error_does_not_consume_other_source_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "sources-industry.json").write_text(json.dumps({
+                "health": {"default_failure_threshold": 1},
+                "sources": [
+                    {"id": "healthy", "name": "Healthy", "type": "rss", "url": "https://example.invalid/healthy", "query_terms": []},
+                    {"id": "critical", "name": "Critical", "type": "rss", "url": "https://example.invalid/critical", "query_terms": [], "critical": True},
+                ],
+            }), encoding="utf-8")
+            old_state = {"seen_titles": ["old title"], "seen_urls": ["https://example.invalid/old"]}
+            (root / "state-industry.json").write_text(json.dumps(old_state), encoding="utf-8")
+            rss = b"""<rss><channel><item><title>New perovskite module</title><link>https://example.invalid/new</link><description>new</description></item></channel></rss>"""
+
+            def fetch_source(url):
+                if url.endswith("/critical"):
+                    raise OSError("offline mock")
+                return rss
+
+            with ExitStack() as stack:
+                for item in self.industry_paths(root):
+                    stack.enter_context(item)
+                stack.enter_context(patch.object(discover_industry, "fetch", side_effect=fetch_source))
+                stack.enter_context(patch.object(sys, "argv", ["discover_industry.py"]))
+                self.assertEqual(discover_industry.main(), 1)
+
+            state = json.loads((root / "state-industry.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["seen_titles"], old_state["seen_titles"])
+            self.assertEqual(state["seen_urls"], old_state["seen_urls"])
+            self.assertEqual(state["health"]["critical"]["consecutive_failures"], 1)
+
 
 class PipelineFailFastTests(unittest.TestCase):
     def test_discovery_failure_never_invokes_renderers(self):

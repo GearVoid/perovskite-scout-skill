@@ -54,12 +54,9 @@ TOPIC_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lead-free", ("lead-free", "lead free", "tin-based", "tin based")),
 )
 
-_CIRCLED_INDICES = ("", "\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467", "\u2468", "\u2469")
-
-
 def delivery_label(index: int) -> str:
-    """Return the compact label shared by the card and link index."""
-    return _CIRCLED_INDICES[index] if 0 < index < len(_CIRCLED_INDICES) else f"({index})"
+    """Return a font-safe label shared by the card and link index."""
+    return f"{index:02d}" if 0 < index < 100 else str(index)
 
 
 def with_delivery_indices(

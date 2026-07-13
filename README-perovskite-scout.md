@@ -16,7 +16,7 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]
 python scripts/validate_outputs.py
 
 # 3) 投递闭环：跑管线 -> 校验 -> 组装投递包 -> 推送到出口 (详见下文「投递闭环」)
-python scripts/deliver.py [--mode production|preview] [--transport local|webhook]
+python scripts/deliver.py [--mode production|preview] [--transport local|webhook] [--allow-local-fallback]
 ```
 
 `validate_outputs.py` 退出码：`0` = 全绿，`1` = 有失败项。
@@ -61,7 +61,7 @@ pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 | transport | 行为 |
 |-----------|------|
 | `local`（默认） | 校验全绿后写入长版 `message.txt`、微信短版 `message-compact.txt`、`card.png` 与 manifest。新消费者优先发短版，旧消费者路径不变 |
-| `webhook` | 保留 `{text, image_path, manifest}`，并新增 `compact_text` 与扁平契约字段；未配置则退回 `local` |
+| `webhook` | 严格远端出口：保留 `{text, image_path, manifest}`，并新增 `compact_text`、`delivery_id` 与幂等请求头；未配置或 POST 失败即非零退出并回滚去重 state。仅显式加 `--allow-local-fallback` 才保留本地包，且 manifest 仍为 `failed` |
 
 ### 安全红线（已守住）
 
@@ -74,7 +74,7 @@ pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 openclaw 侧只需做两件事（本仓库不管凭证）：
 
 1. **定时触发**：例如每周一 09:00 执行 `python scripts/deliver.py`（不加 `--mode` 即生产模式）。
-2. **微信出口**：优先读取 `message-compact.txt` + `card.png`；短版不存在时回退 `message.txt`。也可设置 `$DELIVERY_WEBHOOK` 直接 POST。
+2. **微信出口**：先发 `card.png`，紧接着发 `message-compact.txt`；图中的 01–07 与短版中的可点击原文链接一一对应。短版不存在时回退 `message.txt`。也可设置 `$DELIVERY_WEBHOOK` 直接 POST。
 
 > 官方 newsroom（html-monitor）、NREL 效率图（monitored-asset）、社交/博主层均**未做**，按计划等投递闭环先稳定跑 1–2 期再加。
 
@@ -122,12 +122,12 @@ export OPENALEX_MAILTO=you@example.com
 | `rejected-industry.json` | 未命中关键词 / fetch 失败 / 被跨 feed 去重剔除的行业条目 + `reject_reason` |
 | `output/perovskite-scout-digest.txt` | 纯文本简报，可直接复制到微信（含「产业动态」区） |
 | `output/perovskite-scout-digest-compact.txt` | 微信短版（Top5 + 产业 Top2 标题与完整链接） |
-| `output/perovskite-scout-card.png` | 微信图片卡片（Top5 + 产业动态 2 条，`1080px` 宽；2× 超采样；需 Pillow） |
+| `output/perovskite-scout-card.png` | 微信图片卡片（研究 Top3 + 产业 Top1；编号、来源、tier、日期和确定性主题标签；`1080px` 宽；2× 超采样；需 Pillow） |
 | `output/perovskite-scout-card.html` | 无 Pillow 时的图片卡片回退产物 |
 | `state-feed.json` | 论文去重状态（已见 arXiv id），勿手动编辑 |
 | `state-industry.json` | 行业源去重状态（已见标题/URL），勿手动编辑 |
 
-`digest-compact.txt` 是卡片的链接伴侣；`card.png` 为排版美观**不放链接**。长版仍保留完整摘要与更多产业动态。
+`digest-compact.txt` 是卡片的链接伴侣：卡片显示研究 Top3 与产业 Top1，短版保留论文 Top5 与产业 Top2，使用同一组 01–07 编号。`card.png` 为排版美观**不放链接**；长版仍保留完整摘要与更多产业动态。
 
 ---
 
@@ -144,7 +144,7 @@ scripts/relevance_filter.py  # 论文 + 产业相关性唯一判定入口
 scripts/tier_mapper.py       # 机器可信度分级 T1-T4
 scripts/enrich_metadata.py   # Crossref/OpenAlex 字段补全（只补字段, 不新增发现源）
 scripts/text_renderer.py     # 长版 + 微信 compact 文本（含「产业动态」区）
-scripts/image_renderer.py    # 2× 超采样微信卡片（Top5 + 产业动态 2 条; Pillow / HTML fallback）
+scripts/image_renderer.py    # 2× 超采样微信卡片（研究 Top3 + 产业 Top1；编号/来源/tier/主题标签；Pillow / HTML fallback）
 scripts/text_utils.py        # 共享文本卫生（防乱码 / 终端 UTF-8 重设）
 scripts/run_pipeline.py      # 一键串联（论文 → 行业 → 跨 feed 去重 → 渲染）
 scripts/validate_outputs.py  # 产出校验（含 tier/relevance 复算、compact、PNG 完整性）
@@ -156,7 +156,7 @@ requirements-optional.txt    # 仅 Pillow
 
 > **两条主线 + 跨 feed 去重**：`feed-papers.json`（论文）与 `feed-industry.json`（行业）刻意分开，避免把行业媒体混进科研结论。管线在 `discover_industry` 之后自动做跨 feed 去重——同一主体（如 Oxford PV）既发论文又发公告时，行业条目若与论文的**归一标题 / URL / DOI** 任一相同即被剔除，不会在微信里重复出现。标题相似度（模糊匹配）留到后续阶段。
 >
-> **微信图文分区**：长版最多放 5 条产业动态；compact 与图片保持 Top5 论文 + 产业 Top2。图片读摘要，短版负责可点击链接。
+> **微信图文分区**：长版最多放 5 条产业动态；图片只做可扫读的研究 Top3 + 产业 Top1，不放 URL、score、OpenAlex 或原始摘要；compact 保留论文 Top5 + 产业 Top2 的原题和可点击链接。按同一组 01–07 编号先图后文发送。
 
 ---
 

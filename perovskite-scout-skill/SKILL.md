@@ -43,14 +43,14 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]
 | 路径 | 说明 |
 |------|------|
 | `output/delivery/message.txt` | 兼容长版（可能超过微信单条长度，必要时分段） |
-| `output/delivery/message-compact.txt` | 微信短版（Top5 + 产业 Top2 的标题与可点击链接，推荐随图发送） |
-| `output/delivery/card.png` | 微信图片卡片（Top5 论文 + 产业动态 2 条，1080px 宽，2× 超采样） |
+| `output/delivery/message-compact.txt` | 微信短版（论文 Top5 + 产业 Top2 的原题与可点击链接；按 01–07 对应图片，紧随图片发送） |
+| `output/delivery/card.png` | 微信图片卡片（研究 Top3 + 产业 Top1；编号、来源、tier、日期和确定性主题标签；1080px 宽，2× 超采样；不放 URL） |
 | `output/delivery/delivery-manifest.json` | 投递决策依据（status 见下） |
 | `feed-papers.json` / `feed-industry.json` | 结构化数据（论文 / 产业两条主线） |
 
 `delivery-manifest.json` 的 `status` 取值与动作：
 
-- `ready` → 优先发 `card.png` + `message-compact.txt`；旧消费者可继续发 `message.txt`
+- `ready` → 先发 `card.png`，紧接着发 `message-compact.txt`；两者用 01–07 对应，旧消费者可继续发 `message.txt`
 - `skipped` → 本轮无新内容，**不发送**（旧文件已清空）
 - 命令退出码非 0 → 校验失败，**不发正文**，改发错误通知
 

@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import sys
 import time
 import urllib.request
@@ -86,21 +87,61 @@ class DeliveryLock:
         self.path = path
         self.ttl_seconds = ttl_seconds
         self.acquired = False
+        self.token: str | None = None
+
+    @staticmethod
+    def _read_metadata(path: Path) -> dict | None:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    @staticmethod
+    def _same_host_owner_is_alive(metadata: dict | None) -> bool:
+        """Only reclaim an expired local lock after its owning PID has exited."""
+        if not metadata or metadata.get("hostname") != socket.gethostname():
+            return False
+        try:
+            pid = int(metadata["pid"])
+            if pid <= 0:
+                return False
+        except (KeyError, TypeError, ValueError, ProcessLookupError):
+            return False
+        if os.name == "nt":
+            # Windows does not support POSIX's harmless signal 0. Query the
+            # process handle instead; using os.kill(pid, 0) can terminate the
+            # current test/process on some Python builds.
+            import ctypes
+
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            # It is safer to regard an inaccessible local PID as live.
+            return True
+        except OSError:
+            return False
+        return True
 
     @staticmethod
     def _metadata_is_expired(path: Path, ttl_seconds: int) -> bool:
         now = time.time()
+        metadata = DeliveryLock._read_metadata(path)
         try:
-            metadata = json.loads(path.read_text(encoding="utf-8"))
-            expires_at = float(metadata["expires_at_epoch"])
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            expires_at = float((metadata or {})["expires_at_epoch"])
+        except (ValueError, TypeError, KeyError):
             # A process may be between O_EXCL creation and its first write.
             # Treat malformed metadata as stale only after a full TTL.
             try:
                 return now - path.stat().st_mtime >= ttl_seconds
             except OSError:
                 return True
-        return now >= expires_at
+        return now >= expires_at and not DeliveryLock._same_host_owner_is_alive(metadata)
 
     def acquire(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +151,8 @@ class DeliveryLock:
             started_epoch = time.time()
             metadata = {
                 "pid": os.getpid(),
+                "hostname": socket.gethostname(),
+                "token": uuid.uuid4().hex,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "started_at_epoch": started_epoch,
                 "expires_at_epoch": started_epoch + self.ttl_seconds,
@@ -148,6 +191,7 @@ class DeliveryLock:
                     pass
                 raise
             self.acquired = True
+            self.token = metadata["token"]
             return
         raise DeliveryLockError(f"could not acquire delivery lock {self.path}")
 
@@ -155,11 +199,16 @@ class DeliveryLock:
         if not self.acquired:
             return
         try:
-            self.path.unlink()
+            metadata = self._read_metadata(self.path)
+            # An old process must never unlink a replacement lock recovered by
+            # another run after the old lease expired.
+            if metadata and metadata.get("token") == self.token:
+                self.path.unlink()
         except FileNotFoundError:
             pass
         finally:
             self.acquired = False
+            self.token = None
 
 
 def delivery_lock_path() -> Path:

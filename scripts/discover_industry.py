@@ -225,10 +225,19 @@ def main() -> int:
         atomic_write_json(FEED, feed)
         atomic_write_json(REJECTED, rejected_feed)
         if not args.ignore_state:
-            state["seen_titles"] = list(seen_titles | now_titles)
-            state["seen_urls"] = list(seen_urls | now_urls)
-            state["health"] = next_health
-            atomic_write_json(STATE, state)
+            source_errors = any(record["status"] in failed_statuses for record in health)
+            # --rebuild promises not to replace dedup memory until every
+            # configured source has completed. Otherwise a failed source could
+            # turn a manual reset into an accidental re-delivery of old items.
+            if not (args.rebuild and source_errors):
+                # A critical health failure makes this run non-deliverable.
+                # Preserve content state so successfully fetched sibling
+                # sources are retried with the recovered source next time.
+                if not failures:
+                    state["seen_titles"] = list(seen_titles | now_titles)
+                    state["seen_urls"] = list(seen_urls | now_urls)
+                state["health"] = next_health
+                atomic_write_json(STATE, state)
     except Exception as exc:
         print(f"[FAIL] cannot publish industry outputs: {exc}")
         return 1

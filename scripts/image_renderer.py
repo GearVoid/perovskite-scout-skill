@@ -645,7 +645,7 @@ def render_pil(
     note_font = load_font(20, "body")
     note = ui_text(
         "完整链接见配套微信短版  |  tier 与相关性均由规则管线判定",
-        "Full original titles and clickable links: next message ①–⑦",
+        "Full original titles and clickable links: next message 01–07",
         role="body",
     )
     draw.text((MARGIN_X, HEIGHT - 34), note, font=note_font, fill=MUTED)
@@ -712,7 +712,7 @@ def render_html(
         f"<div class='under'></div><div class='top'>Research Cards / {html.escape(today)}</div>"
         + "".join(cards)
         + (f"<div class='industry-h'>{ui_text('产业动态', 'Industry Signals', role='title')}</div>" + "".join(ind_cards) if ind_cards else "")
-        + "<div class='foot'>Source details shown | Full original titles and clickable links: next message ①–⑦</div></main></body></html>"
+        + "<div class='foot'>Source details shown | Full original titles and clickable links: next message 01–07</div></main></body></html>"
     )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "perovskite-scout-card.html"

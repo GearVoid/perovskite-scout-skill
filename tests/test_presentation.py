@@ -57,7 +57,7 @@ class PresentationTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         for index in range(1, 8):
-            self.assertIn(chr(0x245F + index), first)
+            self.assertIn(f"{index:02d}", first)
         for item in [*self.papers, *self.industry]:
             self.assertIn(item["title"], first)
             self.assertIn(item["url"], first)
@@ -73,9 +73,9 @@ class PresentationTests(unittest.TestCase):
                 )
             content = card.read_text(encoding="utf-8")
 
-        for label in ("①", "②", "③", "⑥"):
+        for label in ("01", "02", "03", "06"):
             self.assertIn(label, content)
-        for label in ("④", "⑤", "⑦"):
+        for label in ("04", "05", "07"):
             self.assertNotIn(f">{label}<", content)
         for forbidden in (
             "http://",
