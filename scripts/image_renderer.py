@@ -420,6 +420,26 @@ def tier_descriptor(tier: str) -> str:
     return ui_text(chinese, english, role="body")
 
 
+def draw_tier_legend(draw: ScaledDraw, y: int) -> None:
+    """Draw an evidence legend whose T1–T4 colours match the card badges."""
+    font = load_font(16, "body")
+    tier_font = load_font(16, "bold")
+    x = MARGIN_X
+    prefix = ui_text("证据等级：", "Evidence tiers: ", role="body")
+    draw.text((x, y), prefix, font=font, fill=MUTED)
+    x += text_w(font, prefix)
+    for position, tier in enumerate(("T1", "T2", "T3", "T4")):
+        draw.text((x, y), tier, font=tier_font, fill=TIER_COLORS[tier])
+        x += text_w(tier_font, tier)
+        descriptor = f" {tier_descriptor(tier)}"
+        draw.text((x, y), descriptor, font=font, fill=MUTED)
+        x += text_w(font, descriptor)
+        if position < 3:
+            separator = " · "
+            draw.text((x, y), separator, font=font, fill=MUTED)
+            x += text_w(font, separator)
+
+
 def sort_top(items: list[dict]) -> list[dict]:
     items_sorted = sorted(
         items,
@@ -701,14 +721,8 @@ def render_pil(
         for item in industry_items[:CARD_INDUSTRY_TOP_N]:
             y = draw_delivery_item(img, draw, item, y)
 
-    legend_font = load_font(16, "body")
-    legend = ui_text(
-        "证据等级：T1 原始论文 · T2 机构发布 · T3 行业媒体 · T4 待核实线索",
-        "Evidence tiers: T1 research · T2 institution · T3 media · T4 unverified",
-        role="body",
-    )
     draw.line([(MARGIN_X, HEIGHT - 82), (WIDTH - MARGIN_X, HEIGHT - 82)], fill=HAIRLINE, width=1)
-    draw.text((MARGIN_X, HEIGHT - 54), ellipsize(legend, legend_font, WIDTH - 2 * MARGIN_X), font=legend_font, fill=MUTED)
+    draw_tier_legend(draw, HEIGHT - 54)
 
     resample = getattr(Image, "Resampling", Image).LANCZOS
     img = img.resize((WIDTH, HEIGHT), resample, reducing_gap=3.0)
@@ -755,6 +769,10 @@ def render_html(
             f"<p class='takeaway'>{html.escape(card_takeaway(it))}</p>"
             f"<p class='tags'>{html.escape(tags)}</p></div></section>"
         )
+    legend = " · ".join(
+        f"<span class='legend-tier tier-{tier.lower()}'>{tier}</span> {html.escape(tier_descriptor(tier))}"
+        for tier in ("T1", "T2", "T3", "T4")
+    )
     page = (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -765,7 +783,7 @@ def render_html(
         "h1{font-size:64px;margin:0 0 20px}.under{height:2px;background:#1d2124;width:580px;margin-bottom:48px}"
         ".top{color:#315f4a;font-size:32px;margin-bottom:34px}"
         ".item{display:grid;grid-template-columns:80px 1fr;gap:28px;border-bottom:1px solid #bbb;padding:24px 0}"
-        ".num{font-size:42px;color:#315f4a}.tier{color:#fff;border-radius:18px;padding:4px 13px;font-weight:700}.tier-desc{color:#315f4a;font:700 17px 'Microsoft YaHei',sans-serif;margin-left:10px}"
+        ".num{font-size:42px;color:#315f4a}.tier{color:#fff;border-radius:18px;padding:4px 13px;font-weight:700}.tier-desc{color:#315f4a;font:700 17px 'Microsoft YaHei',sans-serif;margin-left:10px}.legend-tier{font-weight:700}.tier-t1{color:#315f4a}.tier-t2{color:#466b80}.tier-t3{color:#d5972a}.tier-t4{color:#808480}"
         "h2{font:700 25px 'Microsoft YaHei',sans-serif;margin:12px 0 8px}.meta,p{font:18px/1.55 'Microsoft YaHei',sans-serif;color:#666}.takeaway{color:#315f4a;font-weight:700;margin:4px 0}"
         ".ind{border-bottom:1px solid #ddd;background:#fbf8f1;padding:18px 24px}"
         ".ind .src{color:#5c8196;font-weight:700;margin-bottom:6px}.ind h3{font:700 21px 'Microsoft YaHei',sans-serif;margin:0 0 6px}"
@@ -776,7 +794,7 @@ def render_html(
         f"<div class='under'></div><div class='top'>Research Cards / {html.escape(today)}</div>"
         + "".join(cards)
         + (f"<div class='industry-h'>{ui_text('产业动态', 'Industry Signals', role='title')}</div>" + "".join(ind_cards) if ind_cards else "")
-        + f"<div class='foot'>{html.escape(ui_text('证据等级：T1 原始论文 · T2 机构发布 · T3 行业媒体 · T4 待核实线索', 'Evidence tiers: T1 research · T2 institution · T3 media · T4 unverified', role='body'))}</div></main></body></html>"
+        + f"<div class='foot'>{html.escape(ui_text('证据等级：', 'Evidence tiers: ', role='body'))}{legend}</div></main></body></html>"
     )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "perovskite-scout-card.html"
