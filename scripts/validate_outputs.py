@@ -23,6 +23,7 @@ from text_renderer import (  # 复用确定性排序与短版渲染逻辑
     TOP_MIN_SCORE,
     TOP_N,
     render_compact_digest,
+    render_portable_digest,
     sort_industry,
 )
 from text_utils import safe_reconfigure_stdout  # noqa: E402
@@ -348,6 +349,29 @@ def main() -> int:
             check("compact 与 feed 排序/链接一致", compact.strip() == expected_compact)
     else:
         check("compact 文本存在", False)
+
+    # ---- 平台无关 portable 文本 ----
+    portable_path = OUTPUT / "perovskite-scout-digest-portable.txt"
+    if portable_path.exists():
+        portable = portable_path.read_text(encoding="utf-8")
+        check("portable 文本非空", bool(portable.strip()))
+        check("portable 文本无乱码(U+FFFD)", "\ufffd" not in portable)
+        portable_date_match = re.fullmatch(
+            r"钙钛矿情报雷达｜(\d{4}-\d{2}-\d{2})",
+            portable.splitlines()[0] if portable.splitlines() else "",
+        )
+        check("portable 日期头合法", bool(portable_date_match))
+        if portable_date_match:
+            expected_portable = render_portable_digest(
+                top=top,
+                industry_items=sort_industry(industry_items),
+                today=portable_date_match.group(1),
+                papers_count=len(feed_items),
+                industry_count=len(industry_items),
+            )
+            check("portable 与 feed 排序/链接一致", portable.strip() == expected_portable)
+    else:
+        check("portable 文本存在", False)
 
     # ---- card ----
     png = OUTPUT / "perovskite-scout-card.png"

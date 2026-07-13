@@ -60,7 +60,7 @@ pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 
 | transport | 行为 |
 |-----------|------|
-| `local`（默认） | 校验全绿后写入长版 `message.txt`、微信短版 `message-compact.txt`、`card.png` 与 manifest。新消费者优先发短版，旧消费者路径不变 |
+| `local`（默认） | 校验全绿后写入长版 `message.txt`、微信短版 `message-compact.txt`、通用链接版 `message-portable.txt`、可选 `card.png` 与 manifest。实际优先发送内容由 `--target` 决定 |
 | `webhook` | 严格远端出口：保留 `{text, image_path, manifest}`，并新增 `compact_text`、`delivery_id` 与幂等请求头；未配置或 POST 失败即非零退出并回滚去重 state。仅显式加 `--allow-local-fallback` 才保留本地包，且 manifest 仍为 `failed` |
 
 ### 安全红线（已守住）
@@ -74,7 +74,7 @@ pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 openclaw 侧只需做两件事（本仓库不管凭证）：
 
 1. **定时触发**：例如每周一 09:00 执行 `python scripts/deliver.py`（不加 `--mode` 即生产模式）。
-2. **微信出口**：先发 `card.png`，紧接着发 `message-compact.txt`；图中的 01–07 与短版中的可点击原文链接一一对应。短版不存在时回退 `message.txt`。也可设置 `$DELIVERY_WEBHOOK` 直接 POST。
+2. **按目标发送**：`python scripts/deliver.py --target wechat` 先发 `card.png`，再发 `message-compact.txt`；`--target generic` 只发 `message-portable.txt`；`--target feishu` 发通用文本，若要附图则由接收适配器先上传 `card.png` 并换成飞书 `image_key`。也可设置 `$DELIVERY_WEBHOOK` 直接 POST。
 
 > 官方 newsroom（html-monitor）、NREL 效率图（monitored-asset）、社交/博主层均**未做**，按计划等投递闭环先稳定跑 1–2 期再加。
 
@@ -122,12 +122,15 @@ export OPENALEX_MAILTO=you@example.com
 | `rejected-industry.json` | 未命中关键词 / fetch 失败 / 被跨 feed 去重剔除的行业条目 + `reject_reason` |
 | `output/perovskite-scout-digest.txt` | 纯文本简报，可直接复制到微信（含「产业动态」区） |
 | `output/perovskite-scout-digest-compact.txt` | 微信短版（Top5 + 产业 Top2 标题与完整链接） |
+| `output/perovskite-scout-digest-portable.txt` | 平台无关的链接简报（无“微信/看图”措辞，适合飞书、Slack、邮件或纯文本机器人） |
 | `output/perovskite-scout-card.png` | 微信图片卡片（研究 Top3 + 产业 Top1；编号、来源、tier、日期和确定性主题标签；`1080px` 宽；2× 超采样；需 Pillow） |
 | `output/perovskite-scout-card.html` | 无 Pillow 时的图片卡片回退产物 |
 | `state-feed.json` | 论文去重状态（已见 arXiv id），勿手动编辑 |
 | `state-industry.json` | 行业源去重状态（已见标题/URL），勿手动编辑 |
 
-`digest-compact.txt` 是卡片的链接伴侣：卡片显示研究 Top3 与产业 Top1，短版保留论文 Top5 与产业 Top2，使用同一组 01–07 编号。`card.png` 为排版美观**不放链接**；长版仍保留完整摘要与更多产业动态。
+投递目标在 `config/delivery-targets.json` 中声明文本文件、字数上限、发送顺序与图片处理方式。`wechat` 保持“卡片 + 短版链接索引”；`generic` 只需通用文本；`feishu` 使用通用文本且将图片标记为 `upload_required`，因此通用 webhook 不能把本机 `card.png` 路径直接当作飞书图片发送。`card.png` 为排版美观**不放链接**；长版仍保留完整摘要与更多产业动态。
+
+默认目标保持 `wechat`，以兼容原有不带参数的 OpenClaw 定时任务；切到别的平台时显式传 `--target generic` 或 `--target feishu`。
 
 ---
 

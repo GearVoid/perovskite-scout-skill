@@ -64,8 +64,10 @@ STATE_PAPERS = BASE / "state-feed.json"
 STATE_INDUSTRY = BASE / "state-industry.json"
 DIGEST = OUTPUT / "perovskite-scout-digest.txt"
 COMPACT_DIGEST = OUTPUT / "perovskite-scout-digest-compact.txt"
+PORTABLE_DIGEST = OUTPUT / "perovskite-scout-digest-portable.txt"
 CARD_PNG = OUTPUT / "perovskite-scout-card.png"
-DELIVERY_PAYLOADS = ("message.txt", "message-compact.txt", "card.png")
+TARGETS_CONFIG = BASE / "config" / "delivery-targets.json"
+DELIVERY_PAYLOADS = ("message.txt", "message-compact.txt", "message-portable.txt", "card.png")
 STATE_PATHS = (STATE_PAPERS, STATE_INDUSTRY)
 
 
@@ -268,6 +270,32 @@ def has_new_content(mode: str) -> bool:
     return feed_len(FEED_PAPERS) > 0 or feed_len(FEED_INDUSTRY) > 0
 
 
+def load_target_profile(requested_target: str | None) -> tuple[str, dict]:
+    """Load one configured platform policy without embedding platform APIs here."""
+    try:
+        config = json.loads(TARGETS_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read delivery target config: {exc}") from exc
+    targets = config.get("targets")
+    if not isinstance(targets, dict):
+        raise ValueError("delivery target config requires a targets object")
+    name = requested_target or config.get("default_target")
+    profile = targets.get(name)
+    if not isinstance(name, str) or not isinstance(profile, dict):
+        available = ", ".join(sorted(targets))
+        raise ValueError(f"unknown delivery target {name!r}; available: {available}")
+    preferred = profile.get("preferred_text_file")
+    if preferred not in {"message.txt", "message-compact.txt", "message-portable.txt"}:
+        raise ValueError(f"target {name!r} has unsupported preferred_text_file: {preferred!r}")
+    try:
+        max_chars = int(profile["max_text_chars"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"target {name!r} requires positive max_text_chars") from exc
+    if max_chars <= 0 or not isinstance(profile.get("send_order"), list):
+        raise ValueError(f"target {name!r} has invalid send conditions")
+    return name, {**profile, "max_text_chars": max_chars}
+
+
 def build_message(
     mode: str,
     digest_path: Path = DIGEST,
@@ -394,6 +422,10 @@ def write_local(
     mode: str,
     delivery_id: str | None = None,
     transport: str = "local",
+    *,
+    portable_message: str | None = None,
+    target_name: str = "wechat",
+    target_profile: dict | None = None,
 ) -> Path:
     """事务式组包：payload 全部就绪后，最后原子切换 manifest=ready。"""
     delivery_id = delivery_id or compute_delivery_id(mode)
@@ -401,21 +433,33 @@ def write_local(
         "preparing", mode, "packaging_in_progress",
         delivery_id=delivery_id, transport=transport,
     )
-    if not CARD_PNG.exists():
-        raise FileNotFoundError(f"微信投递缺 PNG 卡片: {CARD_PNG}")
+    portable_message = portable_message if portable_message is not None else message
+    target_profile = target_profile or {
+        "preferred_text_file": "message-compact.txt",
+        "max_text_chars": len(compact_message),
+        "send_order": ["card", "text"],
+        "image_mode": "local_path",
+    }
+    requires_card = "card" in target_profile["send_order"]
+    if requires_card and not CARD_PNG.exists():
+        raise FileNotFoundError(f"target {target_name} requires PNG card: {CARD_PNG}")
 
     token = uuid.uuid4().hex
-    staged = {
+    staged: dict[str, Path] = {
         "message.txt": DELIVERY_DIR / f".message.{token}.tmp",
         "message-compact.txt": DELIVERY_DIR / f".message-compact.{token}.tmp",
-        "card.png": DELIVERY_DIR / f".card.{token}.tmp",
+        "message-portable.txt": DELIVERY_DIR / f".message-portable.{token}.tmp",
     }
+    if requires_card:
+        staged["card.png"] = DELIVERY_DIR / f".card.{token}.tmp"
     try:
         staged["message.txt"].write_text(message, encoding="utf-8")
         staged["message-compact.txt"].write_text(compact_message, encoding="utf-8")
-        shutil.copy2(CARD_PNG, staged["card.png"])
+        staged["message-portable.txt"].write_text(portable_message, encoding="utf-8")
+        if requires_card:
+            shutil.copy2(CARD_PNG, staged["card.png"])
 
-        for name in DELIVERY_PAYLOADS:
+        for name in staged:
             os.replace(staged[name], DELIVERY_DIR / name)
     except Exception:
         for temp in staged.values():
@@ -441,13 +485,18 @@ def write_local(
         "papers_count": feed_len(FEED_PAPERS),
         "paper_count": feed_len(FEED_PAPERS),
         "industry_count": feed_len(FEED_INDUSTRY),
+        "target": target_name,
+        "send_order": target_profile["send_order"],
+        "image_mode": target_profile.get("image_mode", "optional"),
         "text_file": "message.txt",
         "compact_text_file": "message-compact.txt",
-        "preferred_text_file": "message-compact.txt",
-        "image_file": "card.png",
+        "portable_text_file": "message-portable.txt",
+        "preferred_text_file": target_profile["preferred_text_file"],
+        "image_file": "card.png" if requires_card else None,
         "message_path": "output/delivery/message.txt",
         "compact_message_path": "output/delivery/message-compact.txt",
-        "card_path": "output/delivery/card.png",
+        "portable_message_path": "output/delivery/message-portable.txt",
+        "card_path": "output/delivery/card.png" if requires_card else None,
         "delivery_dir": str(DELIVERY_DIR),
     }
     mpath = DELIVERY_DIR / "delivery-manifest.json"
@@ -459,6 +508,7 @@ def write_local(
 def send_webhook(
     message: str,
     compact_message: str,
+    portable_message: str,
     manifest: dict,
     timeout_seconds: float = DEFAULT_WEBHOOK_TIMEOUT_SECONDS,
 ) -> bool:
@@ -470,6 +520,15 @@ def send_webhook(
     payload = {
         "text": message,
         "compact_text": compact_message,
+        "portable_text": portable_message,
+        "preferred_text": {
+            "message.txt": message,
+            "message-compact.txt": compact_message,
+            "message-portable.txt": portable_message,
+        }.get(manifest.get("preferred_text_file"), portable_message),
+        "target": manifest.get("target"),
+        "send_order": manifest.get("send_order"),
+        "image_mode": manifest.get("image_mode"),
         "image_path": str(DELIVERY_DIR / "card.png")
         if (DELIVERY_DIR / "card.png").exists() else None,
         "manifest": manifest,
@@ -511,7 +570,12 @@ def mark_webhook_delivered(manifest_path: Path, manifest: dict) -> None:
 
 
 def _run_delivery(args: argparse.Namespace) -> int:
-    print(f"\n=== deliver [{args.mode}] transport={args.transport} ===")
+    try:
+        target_name, target_profile = load_target_profile(args.target)
+    except ValueError as exc:
+        print(f"[FAIL] delivery target config: {exc}")
+        return 1
+    print(f"\n=== deliver [{args.mode}] target={target_name} transport={args.transport} ===")
 
     # Do not start the deduplicating pipeline when the configured transport
     # cannot possibly deliver. This keeps a missing deployment secret from
@@ -592,8 +656,9 @@ def _run_delivery(args: argparse.Namespace) -> int:
         write_status_manifest("skipped", args.mode, "no_new_content")
         return 0
 
-    # standalone validate 可接受 HTML 预览回退；个人微信 ready 契约必须有 PNG。
-    if not CARD_PNG.exists():
+    # Text-only targets can be delivered without a PNG. Targets whose send
+    # order includes a card still require the raster artifact.
+    if "card" in target_profile["send_order"] and not CARD_PNG.exists():
         rollback_state()
         write_status_manifest("failed", args.mode, "card_png_missing")
         print("[FAIL] 有可投内容但缺少 card.png；请安装 Pillow 后重跑")
@@ -602,6 +667,22 @@ def _run_delivery(args: argparse.Namespace) -> int:
     # 4) 组装投递包
     message = build_message(args.mode)
     compact_message = build_message(args.mode, COMPACT_DIGEST, compact=True)
+    portable_message = build_message(args.mode, PORTABLE_DIGEST, compact=True)
+    texts = {
+        "message.txt": message,
+        "message-compact.txt": compact_message,
+        "message-portable.txt": portable_message,
+    }
+    preferred_text = texts[target_profile["preferred_text_file"]]
+    if not preferred_text.strip() or len(preferred_text) > target_profile["max_text_chars"]:
+        rollback_state()
+        write_status_manifest("failed", args.mode, "target_text_constraint_failed")
+        print(
+            "[FAIL] target text constraint: "
+            f"target={target_name} chars={len(preferred_text)} "
+            f"limit={target_profile['max_text_chars']}"
+        )
+        return 1
     try:
         delivery_id = compute_delivery_id(args.mode)
         mpath = write_local(
@@ -610,6 +691,9 @@ def _run_delivery(args: argparse.Namespace) -> int:
             args.mode,
             delivery_id=delivery_id,
             transport=args.transport,
+            portable_message=portable_message,
+            target_name=target_name,
+            target_profile=target_profile,
         )
     except Exception as exc:  # noqa: BLE001
         rollback_state()
@@ -624,6 +708,7 @@ def _run_delivery(args: argparse.Namespace) -> int:
     print(f"[OK] 本地投递包已生成: {DELIVERY_DIR}")
     print(f"     - message.txt ({len(message)} 字)")
     print(f"     - message-compact.txt ({len(compact_message)} 字，微信优先)")
+    print(f"     - message-portable.txt ({len(portable_message)} 字，{target_name} 优先)")
     if (DELIVERY_DIR / 'card.png').exists():
         print(f"     - card.png")
 
@@ -633,6 +718,7 @@ def _run_delivery(args: argparse.Namespace) -> int:
         ok = send_webhook(
             message,
             compact_message,
+            portable_message,
             manifest,
             timeout_seconds=args.webhook_timeout_seconds,
         )
@@ -659,7 +745,11 @@ def _run_delivery(args: argparse.Namespace) -> int:
             return 1
         mark_webhook_delivered(mpath, manifest)
     else:
-        print("[NOTE] transport=local: openclaw 优先发送 message-compact.txt + card.png；长版保留为 message.txt")
+        print(
+            "[NOTE] transport=local: "
+            f"target={target_name} 按 {target_profile['send_order']} 发送 "
+            f"{target_profile['preferred_text_file']}；image_mode={target_profile.get('image_mode', 'optional')}"
+        )
 
     print("\n[OK] 投递闭环完成")
     return 0
@@ -678,6 +768,11 @@ def main() -> int:
         choices=["local", "webhook"],
         default="local",
         help="local=写 output/delivery/(默认); webhook=POST 到 $DELIVERY_WEBHOOK",
+    )
+    ap.add_argument(
+        "--target",
+        default=None,
+        help="delivery target from config/delivery-targets.json (default: configured default_target)",
     )
     ap.add_argument(
         "--allow-local-fallback",

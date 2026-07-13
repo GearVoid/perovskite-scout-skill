@@ -1,0 +1,23 @@
+{
+  "default_target": "wechat",
+  "targets": {
+    "generic": {
+      "preferred_text_file": "message-portable.txt",
+      "max_text_chars": 30000,
+      "send_order": ["text"],
+      "image_mode": "optional"
+    },
+    "wechat": {
+      "preferred_text_file": "message-compact.txt",
+      "max_text_chars": 2800,
+      "send_order": ["card", "text"],
+      "image_mode": "local_path"
+    },
+    "feishu": {
+      "preferred_text_file": "message-portable.txt",
+      "max_text_chars": 8000,
+      "send_order": ["text", "card"],
+      "image_mode": "upload_required"
+    }
+  }
+}

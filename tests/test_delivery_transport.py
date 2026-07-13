@@ -30,6 +30,7 @@ class DeliveryTransportTests(unittest.TestCase):
         self.state_industry = self.root / "state-industry.json"
         self.digest = self.root / "digest.txt"
         self.compact = self.root / "compact.txt"
+        self.portable = self.root / "portable.txt"
         self.card = self.root / "card.png"
         self.state_papers.write_text('{"seen": ["before"]}', encoding="utf-8")
         self.state_industry.write_text('{"seen": ["before"]}', encoding="utf-8")
@@ -47,6 +48,7 @@ class DeliveryTransportTests(unittest.TestCase):
             patch.object(deliver, "STATE_PATHS", (self.state_papers, self.state_industry)),
             patch.object(deliver, "DIGEST", self.digest),
             patch.object(deliver, "COMPACT_DIGEST", self.compact),
+            patch.object(deliver, "PORTABLE_DIGEST", self.portable),
             patch.object(deliver, "CARD_PNG", self.card),
         )
 
@@ -57,6 +59,7 @@ class DeliveryTransportTests(unittest.TestCase):
         self.state_industry.write_text('{"seen": ["advanced"]}', encoding="utf-8")
         self.digest.write_text("full", encoding="utf-8")
         self.compact.write_text("compact", encoding="utf-8")
+        self.portable.write_text("portable", encoding="utf-8")
         self.card.write_bytes(b"png")
         return 0
 

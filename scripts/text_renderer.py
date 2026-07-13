@@ -209,6 +209,48 @@ def render_compact_digest(
     return "\n".join(lines).strip()
 
 
+def render_portable_digest(
+    top: list[dict],
+    industry_items: list[dict],
+    today: str,
+    papers_count: int,
+    industry_count: int,
+) -> str:
+    """Render a platform-neutral link digest without image or WeChat wording."""
+    delivery_papers, industry_top = with_delivery_indices(
+        top[:TOP_N], industry_items[:INDUSTRY_TOP_N]
+    )
+    lines = [
+        f"钙钛矿情报雷达｜{today}",
+        f"论文 {papers_count} 条 · 产业 {industry_count} 条",
+    ]
+    if delivery_papers:
+        lines.extend(["", f"论文精选 {len(delivery_papers)} 条"])
+        for it in delivery_papers:
+            tier = it.get("provenance_tier", "?")
+            lines.extend([
+                f"{delivery_label(it['delivery_index'])} [{tier}] {compact_title(it.get('title'))}",
+                str(it.get("url", "")),
+            ])
+
+    lines.extend(["", f"产业动态 {len(industry_top)} 条"])
+    if industry_top:
+        for it in industry_top:
+            tier = it.get("provenance_tier", "?")
+            lines.extend([
+                f"{delivery_label(it['delivery_index'])} [{tier}] {source_label(it)}｜{compact_title(it.get('title'))}",
+                str(it.get("url", "")),
+            ])
+    else:
+        lines.append("（本期无行业动态）")
+
+    lines.extend([
+        "",
+        "证据等级：T1 原始论文 · T2 机构发布 · T3 行业媒体 · T4 待核实线索",
+    ])
+    return "\n".join(lines).strip()
+
+
 def main() -> int:
     safe_reconfigure_stdout()  # Windows GBK 终端下避免打印中文/特殊符号时崩溃
     if not FEED_PATH.exists():
@@ -298,6 +340,7 @@ def main() -> int:
         "perovskite-scout-digest.txt",
         "perovskite-scout-digest-part-*.txt",
         "perovskite-scout-digest-compact.txt",
+        "perovskite-scout-digest-portable.txt",
     ):
         for old in OUTPUT_DIR.glob(pat):
             try:
@@ -329,6 +372,17 @@ def main() -> int:
     compact_out = OUTPUT_DIR / "perovskite-scout-digest-compact.txt"
     compact_out.write_text(compact, encoding="utf-8")
     page_files.append(compact_out)
+
+    portable = render_portable_digest(
+        top=top,
+        industry_items=industry_all,
+        today=today,
+        papers_count=len(items_sorted),
+        industry_count=len(industry_all),
+    )
+    portable_out = OUTPUT_DIR / "perovskite-scout-digest-portable.txt"
+    portable_out.write_text(portable, encoding="utf-8")
+    page_files.append(portable_out)
 
     # 控制台输出 (可直接复制)
     print("=" * 44)
