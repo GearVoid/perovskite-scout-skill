@@ -6,6 +6,8 @@
     "page_size": 100,
     "max_pages": 20,
     "watermark_overlap_days": 7,
+    "bootstrap_lookback_days": 14,
+    "preview_lookback_days": 14,
     "sortBy": "submittedDate",
     "sortOrder": "descending",
     "type": "paper"

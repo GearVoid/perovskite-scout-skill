@@ -95,6 +95,32 @@ def timestamp_text(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def select_scan_watermark(
+    cfg: dict,
+    *,
+    use_state: bool,
+    stored_watermark: str | None,
+    now: datetime | None = None,
+) -> tuple[str | None, str]:
+    """Choose a bounded first/preview scan without weakening resumed scans.
+
+    A persisted watermark always wins. A fresh install or a preview has no
+    resume boundary, so use a configurable recent window instead of silently
+    paging through the entire arXiv history. Set the applicable window to 0
+    only when an intentional unbounded backfill is desired.
+    """
+    if stored_watermark:
+        return stored_watermark, "state"
+    key = "bootstrap_lookback_days" if use_state else "preview_lookback_days"
+    days = int(cfg.get(key, 14))
+    if days < 0:
+        raise ValueError(f"{key} must be non-negative")
+    if days == 0:
+        return None, "unbounded"
+    current = now or datetime.now(timezone.utc)
+    return timestamp_text(current - timedelta(days=days)), key
+
+
 def fetch_arxiv_page(cfg: dict, start: int, page_size: int) -> str:
     params = {
         "search_query": cfg["search_query"],
@@ -196,10 +222,19 @@ def main() -> int:
             return 0
         use_state = not args.ignore_state
         state = {} if args.rebuild else (load_state() if use_state else {})
-        watermark = state_watermark(state) if use_state else None
+        watermark, watermark_origin = select_scan_watermark(
+            arxiv_cfg,
+            use_state=use_state,
+            stored_watermark=state_watermark(state) if use_state else None,
+        )
         doc_type = arxiv_cfg.get("type", "paper")
-        print(f"Scanning arXiv pages: size={arxiv_cfg.get('page_size', arxiv_cfg.get('max_results', 100))}, watermark={watermark or 'none'}")
+        print(
+            "Scanning arXiv pages: "
+            f"size={arxiv_cfg.get('page_size', arxiv_cfg.get('max_results', 100))}, "
+            f"watermark={watermark or 'none'} ({watermark_origin})"
+        )
         entries, next_watermark, scan = scan_arxiv(arxiv_cfg, doc_type, watermark)
+        scan["watermark_origin"] = watermark_origin
     except Exception as exc:  # no feed/state write on an incomplete discovery scan
         print(f"[FAIL] arXiv discovery: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

@@ -114,6 +114,27 @@ class PaperWatermarkTests(unittest.TestCase):
             state = json.loads((root / "state-feed.json").read_text(encoding="utf-8"))
             self.assertIn("_meta", state)
 
+    def test_preview_and_bootstrap_scans_default_to_bounded_recent_windows(self):
+        now = discover_papers.parse_timestamp("2026-07-13T12:00:00Z")
+        cfg = {"bootstrap_lookback_days": 14, "preview_lookback_days": 3}
+
+        preview, preview_origin = discover_papers.select_scan_watermark(
+            cfg, use_state=False, stored_watermark=None, now=now
+        )
+        bootstrap, bootstrap_origin = discover_papers.select_scan_watermark(
+            cfg, use_state=True, stored_watermark=None, now=now
+        )
+        resumed, resumed_origin = discover_papers.select_scan_watermark(
+            cfg, use_state=True, stored_watermark="2026-07-01T00:00:00Z", now=now
+        )
+
+        self.assertEqual(preview, "2026-07-10T12:00:00Z")
+        self.assertEqual(preview_origin, "preview_lookback_days")
+        self.assertEqual(bootstrap, "2026-06-29T12:00:00Z")
+        self.assertEqual(bootstrap_origin, "bootstrap_lookback_days")
+        self.assertEqual(resumed, "2026-07-01T00:00:00Z")
+        self.assertEqual(resumed_origin, "state")
+
 
 class IndustryHealthTests(unittest.TestCase):
     def industry_paths(self, root: Path):

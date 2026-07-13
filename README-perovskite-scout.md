@@ -103,10 +103,10 @@ export OPENALEX_MAILTO=you@example.com
 | 参数 | 行为 | 何时用 |
 |------|------|--------|
 | （默认，无参数） | 正常去重：已见过的 arXiv id 不再输出，只吐新增 | **每周定时跑的正确用法**，不要加任何参数 |
-| `--ignore-state` | 忽略去重判定且**不修改** state；本次把本轮抓到的全部内容输出 | 调试 / 看完整预览，不污染 production 去重记忆 |
+| `--ignore-state` | 忽略去重判定且**不修改** state；按 `preview_lookback_days` 回看窗口输出本轮内容 | 调试 / 看完整预览，不污染 production 去重记忆 |
 | `--rebuild` | 先清空 `state-feed.json` 再正常去重 = 从头生成 | 改了过滤规则后重置基线 |
 
-> 注意：`--rebuild` 会删除 `state-feed.json`（去重记忆）。改 `relevance_filter.py` 规则后用它重跑，才能看到新的过滤结果。
+> 注意：`--rebuild` 会在成功扫描后替换 `state-feed.json`（去重记忆）。改 `relevance_filter.py` 规则后用它重跑，才能看到新的过滤结果。首次运行和 `--rebuild` 默认按 `bootstrap_lookback_days` 回看 14 天；将该值设为 `0` 才会显式进行无界历史回填。
 >
 > 定时任务（openclaw）**只调用 `python scripts/deliver.py`，不加任何参数**。它会在校验或组包失败时回滚去重 state，避免未投递内容被提前“吃掉”。
 
