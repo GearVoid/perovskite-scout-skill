@@ -4,7 +4,7 @@ description: >-
   钙钛矿光伏情报雷达。从 arXiv（论文）与行业 RSS（产业动态）抓取，机器判定可信度(tier)与相关性，过滤、跨 feed 去重、生成微信可发的文本简报与图片卡片，经校验后投递到个人微信。当用户的意图是运行/调度/调试 perovskite-scout、生成「钙钛矿情报雷达」周报、查看投了哪些内容、或在 openclaw 等调度器接入投递时使用。注意：脚本位于被引用项目仓库的 scripts/ 下，本技能包不复制、只引用。
 ---
 
-# Perovskite Scout v0.1.0
+# Perovskite Scout v0.2.0
 
 钙钛矿光伏情报雷达：**论文（arXiv）+ 产业（行业 RSS）双 feed**，机器判定可信度与相关性，生成微信可发的图文，经校验后安全投递。
 
@@ -44,13 +44,14 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]
 |------|------|
 | `output/delivery/message.txt` | 兼容长版（可能超过微信单条长度，必要时分段） |
 | `output/delivery/message-compact.txt` | 微信短版（论文 Top5 + 产业 Top2 的原题与可点击链接；按 01–07 对应图片，紧随图片发送） |
+| `output/delivery/message-portable.txt` | 平台无关的链接简报（无“微信/看图”措辞，供 generic、飞书、Slack、邮件等纯文本出口使用） |
 | `output/delivery/card.png` | 微信图片卡片（研究 Top3 + 产业 Top1；编号、来源、tier、日期和确定性主题标签；1080px 宽，2× 超采样；不放 URL） |
 | `output/delivery/delivery-manifest.json` | 投递决策依据（status 见下） |
 | `feed-papers.json` / `feed-industry.json` | 结构化数据（论文 / 产业两条主线） |
 
 `delivery-manifest.json` 的 `status` 取值与动作：
 
-- `ready` → 先发 `card.png`，紧接着发 `message-compact.txt`；两者用 01–07 对应，旧消费者可继续发 `message.txt`
+- `ready` → 按 manifest 的 `target`、`send_order`、`preferred_text_file` 发送；默认 `wechat` 先发 `card.png` 后发 `message-compact.txt`，`generic` 只发 `message-portable.txt`，`feishu` 发通用文本并由接收适配器上传图片
 - `skipped` → 本轮无新内容，**不发送**（旧文件已清空）
 - 命令退出码非 0 → 校验失败，**不发正文**，改发错误通知
 
@@ -63,6 +64,8 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]
 5. **validate 失败不得投递**（deliver.py 已内置该闸门，不要绕过）。
 6. **production 安静周 `status=skipped`，不发旧内容**（deliver.py 会清空上次 message/card）。
 7. **社交 / 博主层继续 DEFER**——本轮不接 X / LinkedIn / 公众号 / 个人动态。
+
+投递目标由 `config/delivery-targets.json` 决定。切换目标时传 `python scripts/deliver.py --target generic` 或 `--target feishu`；不要从文件名自行推断发送顺序。
 
 ## 引用（不要复制脚本）
 

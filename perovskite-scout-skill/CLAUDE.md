@@ -1,6 +1,6 @@
-# Perovskite Scout v0.1.0（Claude Code 入口）
+# Perovskite Scout v0.2.0（Claude Code 入口）
 
-钙钛矿光伏情报雷达。论文(arXiv) + 产业(行业 RSS) 双 feed，机器判级后生成微信图文并校验投递。
+钙钛矿光伏情报雷达。论文(arXiv) + 产业(行业 RSS) 双 feed，机器判级后生成按目标平台投递的图文并校验投递。
 
 ## 运行（从项目根目录，含 scripts/ 的目录）
 
@@ -13,7 +13,7 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]  # 手动全链路
 
 ## 产物
 
-`output/delivery/message.txt`（兼容长版）、`output/delivery/message-compact.txt`（微信优先短版）、`output/delivery/card.png`（图片）、`output/delivery/delivery-manifest.json`（决策依据）。
+`output/delivery/message.txt`（兼容长版）、`output/delivery/message-compact.txt`（微信短版）、`output/delivery/message-portable.txt`（平台无关文本）、`output/delivery/card.png`（图片）、`output/delivery/delivery-manifest.json`（决策依据）。按 manifest 的 `target`、`send_order`、`preferred_text_file` 发送；可用 `--target generic|feishu` 切换平台。
 
 ## 红线（不可违反）
 

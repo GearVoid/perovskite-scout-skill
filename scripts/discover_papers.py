@@ -30,7 +30,7 @@ REJECTED_PATH = BASE / "rejected-papers.json"
 STATE_PATH = BASE / "state-feed.json"
 
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
-USER_AGENT = "perovskite-scout/0.2 (watermark discovery; local run)"
+USER_AGENT = "perovskite-scout/0.2.0 (watermark discovery; local run)"
 
 
 def atomic_write_json(path: Path, data: object) -> None:

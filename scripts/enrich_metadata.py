@@ -59,7 +59,7 @@ def load_openalex_mailto() -> str:
 
 
 OPENALEX_MAILTO = load_openalex_mailto()
-USER_AGENT = f"perovskite-scout/0.1 (mailto:{OPENALEX_MAILTO})"
+USER_AGENT = f"perovskite-scout/0.2.0 (mailto:{OPENALEX_MAILTO})"
 
 
 def _fetch_json(url):

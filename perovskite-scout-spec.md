@@ -3,6 +3,8 @@
 > 版本：v0.1 (MVP 设计) ｜ 日期：2026-07-10
 > 来源：仿 `zarazhangrui/follow-builders` 架构 + 借 `lamalab-org/perla-extract` 发现层 + 参考 PERLA 方法论
 
+> **当前实现注记（v0.2.0，2026-07-13）：** 本文保留为 MVP 设计基线。当前实现已补齐编号化卡片与可点击文本映射、watermark 分页发现、严格 webhook/单实例投递，以及 `wechat`、`generic`、`feishu` 目标投递策略；以 `README.md`、`README-perovskite-scout.md` 和投递协议为当前行为准则。
+
 ## 0. 一句话定位
 第一版做**「可信源钙钛矿情报雷达」**——仿 follow-builders 的中央情报管线，借 perla-extract 的发现层，用机器规则做可信度分级。不做泛资讯摘要器，不做半吊子科研数据库。
 
