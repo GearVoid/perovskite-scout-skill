@@ -88,6 +88,9 @@ class PresentationTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, content.lower())
         self.assertIn("看点：钝化策略与缺陷控制", content)
+        self.assertIn("原始论文", content)
+        self.assertIn("T4 待核实线索", content)
+        self.assertNotIn("Full original titles", content)
         self.assertIn("arXiv", content)
         self.assertIn("pv magazine", content)
         tag_lines = re.findall(r"<p class='tags'>(.*?)</p>", content)

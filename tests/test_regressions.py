@@ -61,6 +61,11 @@ class RenderingContractTests(unittest.TestCase):
         item = {"title": "Mobile ions under reverse bias in stable perovskite diodes"}
         self.assertEqual(image_renderer.card_takeaway(item), "看点：反偏稳定性与离子行为")
 
+    def test_tier_descriptor_explains_badge_and_falls_back_with_font(self):
+        self.assertEqual(image_renderer.tier_descriptor("T1"), "原始论文")
+        with patch.dict(image_renderer.ROLE_HAS_CJK, {"body": False}):
+            self.assertEqual(image_renderer.tier_descriptor("T3"), "Industry media")
+
     def test_compact_digest_keeps_links_and_omits_abstracts(self):
         papers = [{
             "title": "Paper title",

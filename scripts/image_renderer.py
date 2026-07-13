@@ -68,6 +68,13 @@ TIER_COLORS = {
     "T4": GREY,
 }
 
+TIER_DESCRIPTORS: dict[str, tuple[str, str]] = {
+    "T1": ("原始论文", "Primary research"),
+    "T2": ("机构发布", "Institution release"),
+    "T3": ("行业媒体", "Industry media"),
+    "T4": ("待核实线索", "Unverified lead"),
+}
+
 FONT_PATHS = {
     "title": [
         "C:/Windows/Fonts/simsun.ttc",
@@ -407,6 +414,12 @@ def card_takeaway(item: dict) -> str:
     )
 
 
+def tier_descriptor(tier: str) -> str:
+    """Return the reader-facing evidence meaning behind a T1–T4 badge."""
+    chinese, english = TIER_DESCRIPTORS.get(tier, ("来源待说明", "Source pending"))
+    return ui_text(chinese, english, role="body")
+
+
 def sort_top(items: list[dict]) -> list[dict]:
     items_sorted = sorted(
         items,
@@ -629,12 +642,12 @@ def draw_delivery_item(img: Image.Image, draw: ScaledDraw, item: dict, y: int) -
     line_x = left_x + 78
     content_x = left_x + 112
     row_w = WIDTH - content_x - MARGIN_X
-    row_h = 190
+    row_h = 224
 
     index = int(item.get("delivery_index", 0))
     draw.text((left_x, y + 13), delivery_label(index), font=num_font, fill=GREEN)
     draw.line([(line_x, y + 8), (line_x, y + row_h - 16)], fill=HAIRLINE, width=1)
-    draw.ellipse([line_x - 5, y + 84, line_x + 5, y + 94], fill=GREEN)
+    draw.ellipse([line_x - 5, y + 102, line_x + 5, y + 112], fill=GREEN)
 
     tier = str(item.get("provenance_tier", "T?"))[:2]
     tier_color = TIER_COLORS.get(tier, GREY)
@@ -647,20 +660,21 @@ def draw_delivery_item(img: Image.Image, draw: ScaledDraw, item: dict, y: int) -
         fill=(255, 255, 255),
         anchor="mm",
     )
+    draw.text((content_x + 76, y + 16), tier_descriptor(tier), font=tag_font, fill=GREEN)
 
-    title_x = content_x + 82
-    title_lines = wrap_text(item.get("title", "(untitled)"), title_font, row_w - 82, max_lines=2, role="bold")
-    ty = y + 5
+    title_x = content_x
+    title_lines = wrap_text(item.get("title", "(untitled)"), title_font, row_w, max_lines=2, role="bold")
+    ty = y + 55
     for line in title_lines:
         draw.text((title_x, ty), line, font=title_font, fill=INK)
         ty += 35
 
     meta = f"{image_text(source_label(item), role='body')}  |  {item.get('published_date', '')}"
-    draw.text((title_x, y + 83), ellipsize(meta, meta_font, row_w - 82), font=meta_font, fill=MUTED)
-    draw.text((content_x, y + 118), card_takeaway(item), font=takeaway_font, fill=GREEN)
+    draw.text((title_x, y + 130), ellipsize(meta, meta_font, row_w), font=meta_font, fill=MUTED)
+    draw.text((content_x, y + 162), card_takeaway(item), font=takeaway_font, fill=GREEN)
     tags = topic_tags(item)
     if tags:
-        draw.text((content_x, y + 151), "  ".join(f"#{tag}" for tag in tags), font=tag_font, fill=BLUE)
+        draw.text((content_x, y + 194), "  ".join(f"#{tag}" for tag in tags), font=tag_font, fill=BLUE)
     draw.line([(MARGIN_X, y + row_h), (WIDTH - MARGIN_X, y + row_h)], fill=HAIRLINE, width=1)
     return y + row_h + 18
 
@@ -687,16 +701,14 @@ def render_pil(
         for item in industry_items[:CARD_INDUSTRY_TOP_N]:
             y = draw_delivery_item(img, draw, item, y)
 
-    foot_font = load_font(23, "serif")
-    draw_source_mark(draw, MARGIN_X, HEIGHT - 92, foot_font)
-
-    note_font = load_font(20, "body")
-    note = ui_text(
-        "完整链接见配套微信短版  |  tier 与相关性均由规则管线判定",
-        "Full original titles and clickable links: next message 01–07",
+    legend_font = load_font(16, "body")
+    legend = ui_text(
+        "证据等级：T1 原始论文 · T2 机构发布 · T3 行业媒体 · T4 待核实线索",
+        "Evidence tiers: T1 research · T2 institution · T3 media · T4 unverified",
         role="body",
     )
-    draw.text((MARGIN_X, HEIGHT - 34), note, font=note_font, fill=MUTED)
+    draw.line([(MARGIN_X, HEIGHT - 82), (WIDTH - MARGIN_X, HEIGHT - 82)], fill=HAIRLINE, width=1)
+    draw.text((MARGIN_X, HEIGHT - 54), ellipsize(legend, legend_font, WIDTH - 2 * MARGIN_X), font=legend_font, fill=MUTED)
 
     resample = getattr(Image, "Resampling", Image).LANCZOS
     img = img.resize((WIDTH, HEIGHT), resample, reducing_gap=3.0)
@@ -718,6 +730,7 @@ def render_html(
             "<section class='item'>"
             f"<div class='num'>{html.escape(delivery_label(int(item.get('delivery_index', 0))))}</div>"
             f"<div class='body'><span class='tier' style='background:{color}'>{html.escape(tier)}</span>"
+            f"<span class='tier-desc'>{html.escape(tier_descriptor(tier))}</span>"
             f"<h2>{html.escape(image_text(item.get('title', '(untitled)'), role='bold'))}</h2>"
             f"<p class='meta'>{html.escape(image_text(source_label(item), role='body'))} | "
             f"{html.escape(item.get('published_date', ''))}</p>"
@@ -735,6 +748,7 @@ def render_html(
             "<section class='item ind'>"
             f"<div class='num'>{html.escape(delivery_label(int(it.get('delivery_index', 0))))}</div>"
             f"<div class='body'><span class='tier' style='background:{color}'>{html.escape(tier)}</span>"
+            f"<span class='tier-desc'>{html.escape(tier_descriptor(tier))}</span>"
             f"<h2>{html.escape(image_text(it.get('title', '(untitled)'), role='bold'))}</h2>"
             f"<p class='meta'>{html.escape(image_text(source_label(it), role='body'))} | "
             f"{html.escape(it.get('published_date', ''))}</p>"
@@ -751,7 +765,7 @@ def render_html(
         "h1{font-size:64px;margin:0 0 20px}.under{height:2px;background:#1d2124;width:580px;margin-bottom:48px}"
         ".top{color:#315f4a;font-size:32px;margin-bottom:34px}"
         ".item{display:grid;grid-template-columns:80px 1fr;gap:28px;border-bottom:1px solid #bbb;padding:24px 0}"
-        ".num{font-size:42px;color:#315f4a}.tier{color:#fff;border-radius:18px;padding:4px 13px;font-weight:700}"
+        ".num{font-size:42px;color:#315f4a}.tier{color:#fff;border-radius:18px;padding:4px 13px;font-weight:700}.tier-desc{color:#315f4a;font:700 17px 'Microsoft YaHei',sans-serif;margin-left:10px}"
         "h2{font:700 25px 'Microsoft YaHei',sans-serif;margin:12px 0 8px}.meta,p{font:18px/1.55 'Microsoft YaHei',sans-serif;color:#666}.takeaway{color:#315f4a;font-weight:700;margin:4px 0}"
         ".ind{border-bottom:1px solid #ddd;background:#fbf8f1;padding:18px 24px}"
         ".ind .src{color:#5c8196;font-weight:700;margin-bottom:6px}.ind h3{font:700 21px 'Microsoft YaHei',sans-serif;margin:0 0 6px}"
@@ -762,7 +776,7 @@ def render_html(
         f"<div class='under'></div><div class='top'>Research Cards / {html.escape(today)}</div>"
         + "".join(cards)
         + (f"<div class='industry-h'>{ui_text('产业动态', 'Industry Signals', role='title')}</div>" + "".join(ind_cards) if ind_cards else "")
-        + "<div class='foot'>Source details shown | Full original titles and clickable links: next message 01–07</div></main></body></html>"
+        + f"<div class='foot'>{html.escape(ui_text('证据等级：T1 原始论文 · T2 机构发布 · T3 行业媒体 · T4 待核实线索', 'Evidence tiers: T1 research · T2 institution · T3 media · T4 unverified', role='body'))}</div></main></body></html>"
     )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "perovskite-scout-card.html"
