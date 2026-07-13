@@ -48,6 +48,19 @@ class RenderingContractTests(unittest.TestCase):
             self.assertEqual(image_renderer.ui_text("中文", "English", role="body"), "English")
             self.assertEqual(image_renderer.image_text("中文 title", role="body"), "[CN] title")
 
+    def test_card_takeaway_is_rule_based_with_font_safe_fallback(self):
+        item = {"title": "Interface passivation for stable perovskite devices"}
+        self.assertEqual(image_renderer.card_takeaway(item), "看点：钝化策略与缺陷控制")
+        with patch.dict(image_renderer.ROLE_HAS_CJK, {"body": False}):
+            self.assertEqual(
+                image_renderer.card_takeaway(item),
+                "Focus: passivation and defect control",
+            )
+
+    def test_card_takeaway_prefers_specific_title_signal(self):
+        item = {"title": "Mobile ions under reverse bias in stable perovskite diodes"}
+        self.assertEqual(image_renderer.card_takeaway(item), "看点：反偏稳定性与离子行为")
+
     def test_compact_digest_keeps_links_and_omits_abstracts(self):
         papers = [{
             "title": "Paper title",

@@ -361,6 +361,52 @@ def short_summary(abstract: str, chars: int = 190, role: str = "body") -> str:
     return text[:chars].rstrip() + "..." if len(text) > chars else text
 
 
+CARD_TAKEAWAYS: dict[str, tuple[str, str]] = {
+    "passivation": ("看点：钝化策略与缺陷控制", "Focus: passivation and defect control"),
+    "stability": ("看点：稳定性与衰退机制", "Focus: stability and degradation"),
+    "interfaces": ("看点：界面与接触层优化", "Focus: interface and contact engineering"),
+    "tandem": ("看点：叠层器件设计", "Focus: tandem device design"),
+    "wide-bandgap": ("看点：宽带隙组分与性能权衡", "Focus: wide-bandgap composition trade-offs"),
+    "fabrication": ("看点：制备工艺与可制造性", "Focus: fabrication and manufacturability"),
+    "modules": ("看点：组件放大与工程化", "Focus: module scale-up"),
+    "lead-free": ("看点：无铅/锡基材料路线", "Focus: lead-free and tin-based materials"),
+}
+
+# A small title-keyword layer gives frequent high-value signals a sharper
+# reading cue before falling back to the broader topic tags above. Keep it
+# inspectable and deterministic: these are labels, not generated conclusions.
+CARD_TITLE_TAKEAWAYS: tuple[tuple[tuple[str, ...], tuple[str, str]], ...] = (
+    (("reverse bias", "mobile ions"), ("看点：反偏稳定性与离子行为", "Focus: reverse-bias stability and ion behaviour")),
+    (("micro-texture", "nano-texture", "light management"), ("看点：光管理与表面微结构", "Focus: light management and surface textures")),
+    (("agenda", "conference", "summit"), ("看点：产业会议与合作网络", "Focus: industry events and partnerships")),
+    (("launches", "launch", "commercial"), ("看点：产业化与组件进展", "Focus: commercialization and module progress")),
+    (("efficiency", "power conversion"), ("看点：效率提升路径", "Focus: efficiency improvement")),
+)
+
+
+def card_takeaway(item: dict) -> str:
+    """Return a concise, deterministic reading cue for the raster card.
+
+    This is deliberately a title-keyword classification, rather than an LLM
+    summary: it stays available on font-poor/offline deployments and never
+    rewrites the source claim. The full canonical title remains in the paired
+    clickable-text message.
+    """
+    title = sanitize_text(item.get("title", "")).lower()
+    for keywords, (chinese, english) in CARD_TITLE_TAKEAWAYS:
+        if any(keyword in title for keyword in keywords):
+            return ui_text(chinese, english, role="body")
+    for tag in topic_tags(item, limit=2):
+        if tag in CARD_TAKEAWAYS:
+            chinese, english = CARD_TAKEAWAYS[tag]
+            return ui_text(chinese, english, role="body")
+    return ui_text(
+        "看点：钙钛矿器件与材料研究",
+        "Focus: perovskite device and materials research",
+        role="body",
+    )
+
+
 def sort_top(items: list[dict]) -> list[dict]:
     items_sorted = sorted(
         items,
@@ -576,18 +622,19 @@ def draw_delivery_item(img: Image.Image, draw: ScaledDraw, item: dict, y: int) -
     num_font = load_font(38, "serif")
     title_font = load_font(29, "bold")
     meta_font = load_font(21, "body")
+    takeaway_font = load_font(21, "body")
     tag_font = load_font(19, "body")
     tier_font = load_font(20, "bold")
     left_x = MARGIN_X
     line_x = left_x + 78
     content_x = left_x + 112
     row_w = WIDTH - content_x - MARGIN_X
-    row_h = 158
+    row_h = 190
 
     index = int(item.get("delivery_index", 0))
     draw.text((left_x, y + 13), delivery_label(index), font=num_font, fill=GREEN)
     draw.line([(line_x, y + 8), (line_x, y + row_h - 16)], fill=HAIRLINE, width=1)
-    draw.ellipse([line_x - 5, y + 70, line_x + 5, y + 80], fill=GREEN)
+    draw.ellipse([line_x - 5, y + 84, line_x + 5, y + 94], fill=GREEN)
 
     tier = str(item.get("provenance_tier", "T?"))[:2]
     tier_color = TIER_COLORS.get(tier, GREY)
@@ -610,9 +657,10 @@ def draw_delivery_item(img: Image.Image, draw: ScaledDraw, item: dict, y: int) -
 
     meta = f"{image_text(source_label(item), role='body')}  |  {item.get('published_date', '')}"
     draw.text((title_x, y + 83), ellipsize(meta, meta_font, row_w - 82), font=meta_font, fill=MUTED)
+    draw.text((content_x, y + 118), card_takeaway(item), font=takeaway_font, fill=GREEN)
     tags = topic_tags(item)
     if tags:
-        draw.text((content_x, y + 119), "  ".join(f"#{tag}" for tag in tags), font=tag_font, fill=BLUE)
+        draw.text((content_x, y + 151), "  ".join(f"#{tag}" for tag in tags), font=tag_font, fill=BLUE)
     draw.line([(MARGIN_X, y + row_h), (WIDTH - MARGIN_X, y + row_h)], fill=HAIRLINE, width=1)
     return y + row_h + 18
 
@@ -673,6 +721,7 @@ def render_html(
             f"<h2>{html.escape(image_text(item.get('title', '(untitled)'), role='bold'))}</h2>"
             f"<p class='meta'>{html.escape(image_text(source_label(item), role='body'))} | "
             f"{html.escape(item.get('published_date', ''))}</p>"
+            f"<p class='takeaway'>{html.escape(card_takeaway(item))}</p>"
             f"<p class='tags'>{html.escape(tags)}</p></div>"
             "</section>"
         )
@@ -689,6 +738,7 @@ def render_html(
             f"<h2>{html.escape(image_text(it.get('title', '(untitled)'), role='bold'))}</h2>"
             f"<p class='meta'>{html.escape(image_text(source_label(it), role='body'))} | "
             f"{html.escape(it.get('published_date', ''))}</p>"
+            f"<p class='takeaway'>{html.escape(card_takeaway(it))}</p>"
             f"<p class='tags'>{html.escape(tags)}</p></div></section>"
         )
     page = (
@@ -702,7 +752,7 @@ def render_html(
         ".top{color:#315f4a;font-size:32px;margin-bottom:34px}"
         ".item{display:grid;grid-template-columns:80px 1fr;gap:28px;border-bottom:1px solid #bbb;padding:24px 0}"
         ".num{font-size:42px;color:#315f4a}.tier{color:#fff;border-radius:18px;padding:4px 13px;font-weight:700}"
-        "h2{font:700 25px 'Microsoft YaHei',sans-serif;margin:12px 0 8px}.meta,p{font:18px/1.55 'Microsoft YaHei',sans-serif;color:#666}"
+        "h2{font:700 25px 'Microsoft YaHei',sans-serif;margin:12px 0 8px}.meta,p{font:18px/1.55 'Microsoft YaHei',sans-serif;color:#666}.takeaway{color:#315f4a;font-weight:700;margin:4px 0}"
         ".ind{border-bottom:1px solid #ddd;background:#fbf8f1;padding:18px 24px}"
         ".ind .src{color:#5c8196;font-weight:700;margin-bottom:6px}.ind h3{font:700 21px 'Microsoft YaHei',sans-serif;margin:0 0 6px}"
         ".industry-h{color:#315f4a;font-size:30px;margin:40px 0 10px}"
