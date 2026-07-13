@@ -1,6 +1,6 @@
 """relevance_filter.py — 相关性过滤 (discovery quality gate)。
 
-输入 arXiv item dict，输出是否保留 + 相关性评分 + 原因。
+输入论文或产业 item dict，输出是否保留 + 相关性评分 + 原因。
 纯规则，无 LLM（与 tier_mapper 一致，MVP 不引入 LLM 判定）。
 
 目标：挡掉含 perovskite/solar 字样但非"钙钛矿光伏情报核心"的噪声，
@@ -184,6 +184,37 @@ def filter_item(item: dict) -> dict:
         reason += " (soft: " + ", ".join(soft_hits[:3]) + ")"
     result["relevance_reason"] = reason + reason_suffix
     result["relevance_score"] = score
+    return result
+
+
+def filter_industry_item(item: dict, query_terms: list[str]) -> dict:
+    """产业 RSS 的确定性相关性 gate。
+
+    query_terms 为空表示垂直源整源采用；否则按配置顺序做大小写不敏感
+    的子串匹配。与论文 filter_item 一样，所有 relevance 字段只在本模块
+    赋值，discover_industry 只负责复制结果。
+    """
+    result = dict(item)
+    result["relevance_score"] = None
+    result["relevance_reason"] = None
+    result["reject_reason"] = None
+
+    if not query_terms:
+        result["keep"] = True
+        result["relevance_score"] = 1.0
+        result["relevance_reason"] = "source-curated (no gate)"
+        return result
+
+    haystack = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+    for term in query_terms:
+        if str(term).lower() in haystack:
+            result["keep"] = True
+            result["relevance_score"] = 1.0
+            result["relevance_reason"] = f"keyword-match: {term}"
+            return result
+
+    result["keep"] = False
+    result["reject_reason"] = "no keyword match"
     return result
 
 

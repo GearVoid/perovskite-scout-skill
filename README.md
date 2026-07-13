@@ -37,6 +37,7 @@
 - 论文 feed 与行业 feed 分开保存，并做跨 feed 去重。
 - 生成微信可用的：
   - `output/delivery/message.txt`：文本简报
+  - `output/delivery/message-compact.txt`：微信短版（标题 + 可点击原始链接）
   - `output/delivery/card.png`：图片卡片
   - `output/delivery/delivery-manifest.json`：投递决策
 - 支持本地投递包和 webhook 投递出口。
@@ -61,7 +62,7 @@ python scripts/validate_outputs.py
 pip install -r requirements-optional.txt
 ```
 
-未安装 Pillow 时，图片渲染会退回 HTML，不影响其他环节。
+未安装 Pillow 时，图片渲染会退回 HTML，适合人工预览；个人微信 `deliver.py` 的 `ready` 投递仍要求 PNG。
 
 ## 投递规则
 
@@ -75,7 +76,7 @@ output/delivery/delivery-manifest.json
 
 | status | 动作 |
 |---|---|
-| `ready` | 发送 `card.png` + `message.txt` |
+| `ready` | 优先发送 `card.png` + `message-compact.txt`；兼容长版为 `message.txt` |
 | `skipped` | 本轮无新增，不发送 |
 | 命令退出码非 0 | 管线或校验失败，不发送正文，只发错误通知 |
 
@@ -159,6 +160,7 @@ paper discovery -> metadata enrichment -> industry RSS -> cross-feed dedupe
 - Keeps paper and industry feeds separate, then deduplicates across them.
 - Generates WeChat-ready artifacts:
   - `output/delivery/message.txt`: text digest
+  - `output/delivery/message-compact.txt`: compact WeChat link companion
   - `output/delivery/card.png`: image card
   - `output/delivery/delivery-manifest.json`: delivery decision manifest
 - Supports local delivery packaging and webhook delivery.
@@ -183,7 +185,7 @@ Optional PNG rendering dependency:
 pip install -r requirements-optional.txt
 ```
 
-Without Pillow, the image renderer falls back to HTML.
+Without Pillow, the image renderer falls back to HTML for manual preview; a `ready` personal-WeChat delivery still requires PNG.
 
 ## Delivery Contract
 
@@ -197,7 +199,7 @@ Use `status` to decide what to send:
 
 | status | Action |
 |---|---|
-| `ready` | Send `card.png` + `message.txt` |
+| `ready` | Prefer `card.png` + `message-compact.txt`; `message.txt` remains the compatible full version |
 | `skipped` | No new content; send nothing |
 | non-zero command exit | Pipeline or validation failed; send an error notification, not the digest |
 

@@ -38,13 +38,14 @@ python scripts/deliver.py
 
 ```text
 output/delivery/message.txt             微信文本正文
+output/delivery/message-compact.txt     微信短版（推荐随卡片发送）
 output/delivery/card.png                微信图片卡片
 output/delivery/delivery-manifest.json  投递决策
 ```
 
 `delivery-manifest.json` 规则：
 
-- `ready`：发送 `card.png` + `message.txt`
+- `ready`：优先发送 `card.png` + `message-compact.txt`；旧消费者可继续使用 `message.txt`
 - `skipped`：本轮无新增，不发送
 - 命令退出码非 0：校验或管线失败，不发送正文
 
@@ -76,7 +77,7 @@ DELIVERY_WEBHOOK=https://example.com/perovskite-scout-delivery
 - Noto Sans CJK
 - Source Han Sans
 
-如果没有 CJK 字体，`scripts/image_renderer.py` 会自动把图片里的固定中文标签降级为英文，避免出现方块字；`message.txt` 仍然保留中文。
+如果没有完整 CJK 字体，`scripts/image_renderer.py` 会按 title/body/bold 字体角色分别降级固定标签；动态中文用明确的 `[CN]` 占位，避免静默出现方块字。`message.txt` 与 `message-compact.txt` 始终保留原始 Unicode 文本。
 
 ## 运行时文件
 

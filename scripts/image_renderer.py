@@ -36,16 +36,17 @@ FEED_INDUSTRY_PATH = BASE / "feed-industry.json"
 OUTPUT_DIR = BASE / "output"
 
 WIDTH = 1080
-HEIGHT = 1960
+HEIGHT = 2040
 MARGIN_X = 82
 INDUSTRY_TOP_N = 2  # 图片里产业动态克制: 最多 2 条, 否则破坏整体克制感
+RENDER_SCALE = 2    # 整图超采样后缩回 1080px，统一改善文字、细线和 badge 边缘
 
 PAPER = (247, 243, 235)
 INK = (29, 33, 36)
 MUTED = (105, 111, 108)
 HAIRLINE = (188, 187, 177)
 GREEN = (49, 95, 74)
-BLUE = (92, 129, 150)
+BLUE = (70, 107, 128)
 AMBER = (213, 151, 42)
 GREY = (128, 132, 128)
 
@@ -64,9 +65,12 @@ FONT_PATHS = {
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJKsc-Regular.otf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/source-han-serif/SourceHanSerifCN-Regular.otf",
+        "/usr/share/fonts/opentype/source-han-serif/SourceHanSerifSC-Regular.otf",
         "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Regular.otf",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
@@ -78,8 +82,10 @@ FONT_PATHS = {
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Regular.otf",
+        "/usr/share/fonts/opentype/source-han-sans/SourceHanSansSC-Regular.otf",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ],
@@ -90,9 +96,11 @@ FONT_PATHS = {
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Medium.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Bold.otf",
+        "/usr/share/fonts/opentype/source-han-sans/SourceHanSansSC-Bold.otf",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ],
@@ -130,10 +138,20 @@ def find_font_path(role: str) -> str | None:
 
 
 SELECTED_FONT_PATHS = {role: find_font_path(role) for role in FONT_PATHS}
-CJK_IMAGE_TEXT = any(
-    path and any(marker in path.lower().replace("-", "") for marker in CJK_FONT_MARKERS)
-    for path in SELECTED_FONT_PATHS.values()
-)
+
+
+def font_path_has_cjk(path: str | None) -> bool:
+    if not path:
+        return False
+    normalized = path.lower().replace("-", "")
+    return any(marker in normalized for marker in CJK_FONT_MARKERS)
+
+
+ROLE_HAS_CJK = {
+    role: font_path_has_cjk(path) for role, path in SELECTED_FONT_PATHS.items()
+}
+# 固定中文 UI 同时用到 title/body/bold；任一角色缺字时都不能宣称完整中文安全。
+CJK_IMAGE_TEXT = all(ROLE_HAS_CJK.get(role, False) for role in ("title", "body", "bold"))
 
 IMAGE_TEXT_TRANSLATION = str.maketrans(
     {
@@ -163,36 +181,126 @@ IMAGE_TEXT_TRANSLATION = str.maketrans(
         "δ": "delta",
         "μ": "micro",
         "µ": "micro",
+        "‐": "-",   # hyphen
+        "‑": "-",   # non-breaking hyphen (部分 CJK 字体会画成 tofu)
+        "‒": "-",   # figure dash
+        "–": "-",   # en dash
+        "—": "--",  # em dash
+        "−": "-",   # minus sign
+        " ": " ",   # narrow no-break space
     }
 )
 
+NON_CJK_PUNCT_TRANSLATION = str.maketrans(
+    {
+        "：": ": ",
+        "，": ", ",
+        "。": ". ",
+        "；": "; ",
+        "！": "!",
+        "？": "?",
+        "（": "(",
+        "）": ")",
+        "【": "[",
+        "】": "]",
+        "《": "<",
+        "》": ">",
+        "、": ", ",
+        "｜": "|",
+        "·": ".",
+    }
+)
 
-def ui_text(chinese: str, english: str) -> str:
-    """Use English labels when the runtime lacks a CJK-capable font."""
-    return chinese if CJK_IMAGE_TEXT else english
+CJK_RUN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 
 
-def image_text(text: str | None) -> str:
-    """Normalize text for broad font support in raster cards."""
-    return sanitize_text(text or "").translate(IMAGE_TEXT_TRANSLATION)
+def ui_text(chinese: str, english: str, role: str = "body") -> str:
+    """Use English for a fixed label when that label's font lacks CJK glyphs."""
+    return chinese if ROLE_HAS_CJK.get(role, False) else english
+
+
+def image_text(text: str | None, role: str = "body") -> str:
+    """Normalize dynamic text for broad font support in raster cards.
+
+    The full Unicode source remains intact in message.txt. On a font-poor cloud
+    image, unsupported Chinese runs become an explicit [CN] marker instead of
+    silent square glyphs; installing Noto/Source Han restores the original text.
+    """
+    normalized = sanitize_text(text or "").translate(IMAGE_TEXT_TRANSLATION)
+    if not ROLE_HAS_CJK.get(role, False):
+        normalized = CJK_RUN_RE.sub("[CN]", normalized)
+        normalized = normalized.translate(NON_CJK_PUNCT_TRANSLATION)
+        normalized = " ".join(normalized.split())
+    return normalized
 
 
 def load_font(size: int, role: str = "body"):
     path = SELECTED_FONT_PATHS.get(role) or SELECTED_FONT_PATHS.get("body")
     if path:
         try:
-            return ImageFont.truetype(path, size)
+            return ImageFont.truetype(path, size * RENDER_SCALE)
         except OSError:
             pass
-    return ImageFont.load_default()
+    fallback = "DejaVuSans-Bold.ttf" if role == "bold" else "DejaVuSans.ttf"
+    try:
+        return ImageFont.truetype(fallback, size * RENDER_SCALE)
+    except OSError:
+        pass
+    try:
+        return ImageFont.load_default(size=size * RENDER_SCALE)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def text_w(font, text: str) -> float:
-    return font.getlength(text)
+    return font.getlength(text) / RENDER_SCALE
 
 
-def wrap_text(text: str, font, max_width: int, max_lines: int | None = None) -> list[str]:
-    text = image_text(text).replace("\n", " ").strip()
+def scaled(value: float | int) -> int:
+    return int(round(value * RENDER_SCALE))
+
+
+def scaled_box(values) -> list[int]:
+    return [scaled(value) for value in values]
+
+
+class ScaledDraw:
+    """ImageDraw façade accepting the existing 1080px logical coordinates."""
+
+    def __init__(self, image: Image.Image):
+        self.raw = ImageDraw.Draw(image)
+
+    def text(self, xy, text, *args, **kwargs):
+        return self.raw.text((scaled(xy[0]), scaled(xy[1])), text, *args, **kwargs)
+
+    def line(self, points, *args, **kwargs):
+        width = kwargs.pop("width", 1)
+        logical_points = [(scaled(x), scaled(y)) for x, y in points]
+        return self.raw.line(
+            logical_points,
+            *args,
+            width=max(1, scaled(width)),
+            **kwargs,
+        )
+
+    def ellipse(self, box, *args, **kwargs):
+        width = kwargs.pop("width", 1)
+        return self.raw.ellipse(
+            scaled_box(box),
+            *args,
+            width=max(1, scaled(width)),
+            **kwargs,
+        )
+
+
+def wrap_text(
+    text: str,
+    font,
+    max_width: int,
+    max_lines: int | None = None,
+    role: str = "body",
+) -> list[str]:
+    text = image_text(text, role=role).replace("\n", " ").strip()
     if not text:
         return [""]
 
@@ -230,15 +338,15 @@ def ellipsize(text: str, font, max_width: int) -> str:
     return (text.rstrip() + suffix) if text else suffix
 
 
-def fmt_authors(authors: list[str]) -> str:
+def fmt_authors(authors: list[str], role: str = "body") -> str:
     if not authors:
         return "Unknown authors"
-    first = image_text(str(authors[0]))
+    first = image_text(str(authors[0]), role=role)
     return f"{first} et al." if len(authors) > 1 else first
 
 
-def short_summary(abstract: str, chars: int = 150) -> str:
-    text = image_text(abstract or "").replace("\n", " ").strip()
+def short_summary(abstract: str, chars: int = 190, role: str = "body") -> str:
+    text = image_text(abstract or "", role=role).replace("\n", " ").strip()
     return text[:chars].rstrip() + "..." if len(text) > chars else text
 
 
@@ -275,32 +383,46 @@ def load_industry_top() -> list[dict]:
     return items[:INDUSTRY_TOP_N]
 
 
-def draw_industry(draw: ImageDraw.ImageDraw, items: list[dict], y: int) -> int:
+def draw_industry(draw: ScaledDraw, items: list[dict], y: int) -> int:
     if not items:
         return y
-    label_font = load_font(33, "title" if CJK_IMAGE_TEXT else "serif")
-    title_font = load_font(24, "bold")
-    meta_font = load_font(19, "body")
+    label_role = "title" if ROLE_HAS_CJK.get("title", False) else "serif"
+    label_font = load_font(34, label_role)
+    title_font = load_font(27, "bold")
+    meta_font = load_font(20, "body")
 
-    draw.text((MARGIN_X, y), ui_text("产业动态", "Industry Signals"), font=label_font, fill=GREEN)
-    draw.line([(MARGIN_X, y + 46), (200, y + 46)], fill=AMBER, width=4)
-    y += 78
+    draw.text(
+        (MARGIN_X, y),
+        ui_text("产业动态", "Industry Signals", role="title"),
+        font=label_font,
+        fill=GREEN,
+    )
+    draw.line([(MARGIN_X, y + 48), (204, y + 48)], fill=AMBER, width=3)
+    y += 80
 
     for it in items:
-        src = it.get("source_name", "")
+        src = image_text(it.get("source_name", ""), role="body")
         draw.text((MARGIN_X, y), f"\u00b7 {src}", font=meta_font, fill=BLUE)
 
-        title = sanitize_text(it.get("title", "(untitled)"))
-        tl = wrap_text(title, title_font, WIDTH - 2 * MARGIN_X, max_lines=2)
-        ty = y + 32
+        title = it.get("title", "(untitled)")
+        tl = wrap_text(
+            title,
+            title_font,
+            WIDTH - 2 * MARGIN_X,
+            max_lines=2,
+            role="bold",
+        )
+        ty = y + 34
         for line in tl:
             draw.text((MARGIN_X, ty), line, font=title_font, fill=INK)
-            ty += 30
+            ty += 33
 
         date = it.get("published_date", "")
-        meta = ellipsize(f"{date}  |  {it.get('url', '')}", meta_font, WIDTH - 2 * MARGIN_X)
-        draw.text((MARGIN_X, ty + 4), meta, font=meta_font, fill=MUTED)
-        y = ty + 44
+        tier = str(it.get("provenance_tier", "T?"))[:2]
+        subtier = str(it.get("provenance_subtier") or "source verified").replace("-", " ")
+        meta = f"{date}  |  {tier}  |  {subtier}"
+        draw.text((MARGIN_X, ty + 5), meta, font=meta_font, fill=MUTED)
+        y = ty + 49
     return y
 
 
@@ -312,26 +434,20 @@ def paste_smooth_rounded_rectangle(
     outline: tuple[int, int, int] | None = None,
     width: int = 1,
 ) -> None:
-    """Paste an anti-aliased rounded rectangle onto the base image."""
-    scale = 4
+    """Draw a rounded rectangle on the supersampled canvas."""
     x0, y0, x1, y1 = [int(v) for v in box]
     w, h = x1 - x0, y1 - y0
     if w <= 0 or h <= 0:
         return
 
-    layer = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
-    layer_draw = ImageDraw.Draw(layer)
-    scaled_box = [0, 0, w * scale - 1, h * scale - 1]
+    layer_draw = ImageDraw.Draw(img)
     layer_draw.rounded_rectangle(
-        scaled_box,
-        radius=radius * scale,
-        fill=(*fill, 255),
-        outline=(*outline, 255) if outline else None,
-        width=width * scale,
+        scaled_box([x0, y0, x1, y1]),
+        radius=scaled(radius),
+        fill=fill,
+        outline=outline,
+        width=max(1, scaled(width)),
     )
-    resample = getattr(Image, "Resampling", Image).LANCZOS
-    layer = layer.resize((w, h), resample)
-    img.paste(layer, (x0, y0), layer)
 
 
 def add_paper_texture(img: Image.Image) -> None:
@@ -339,8 +455,11 @@ def add_paper_texture(img: Image.Image) -> None:
     w, h = img.size
     for y in range(0, h, 3):
         for x in range(0, w, 3):
-            delta = ((x * 17 + y * 31) % 7) - 3
             r, g, b = pix[x, y]
+            # 只给纯纸面加颗粒，避免在最终缩采样后重新污染文字和 badge 边缘。
+            if max(abs(r - PAPER[0]), abs(g - PAPER[1]), abs(b - PAPER[2])) > 1:
+                continue
+            delta = ((x * 17 + y * 31) % 7) - 3
             pix[x, y] = (
                 max(0, min(255, r + delta)),
                 max(0, min(255, g + delta)),
@@ -348,7 +467,7 @@ def add_paper_texture(img: Image.Image) -> None:
             )
 
 
-def draw_source_mark(draw: ImageDraw.ImageDraw, x: int, y: int, font) -> None:
+def draw_source_mark(draw: ScaledDraw, x: int, y: int, font) -> None:
     draw.ellipse([x, y, x + 46, y + 46], outline=GREEN, width=2)
     draw.line([(x + 23, y - 10), (x + 23, y + 8)], fill=GREEN, width=2)
     draw.line([(x + 23, y + 38), (x + 23, y + 56)], fill=GREEN, width=2)
@@ -361,7 +480,7 @@ def draw_source_mark(draw: ImageDraw.ImageDraw, x: int, y: int, font) -> None:
     draw.ellipse([wave_x + 236, y + 21, wave_x + 242, y + 27], fill=GREEN)
 
 
-def draw_header(draw: ImageDraw.ImageDraw, today: str) -> None:
+def draw_header(draw: ScaledDraw, today: str) -> None:
     title_font = load_font(72, "title")
     label_font = load_font(26, "serif")
     sub_font = load_font(33, "serif")
@@ -372,7 +491,12 @@ def draw_header(draw: ImageDraw.ImageDraw, today: str) -> None:
     draw.ellipse([42, 54, 62, 74], outline=HAIRLINE, width=2)
     draw.text((820, 48), "Research Digest", font=label_font, fill=GREEN)
 
-    draw.text((MARGIN_X, 150), ui_text("钙钛矿情报雷达", "Perovskite Scout"), font=title_font, fill=INK)
+    draw.text(
+        (MARGIN_X, 150),
+        ui_text("钙钛矿情报雷达", "Perovskite Scout", role="title"),
+        font=title_font,
+        fill=INK,
+    )
     draw.line([(MARGIN_X, 246), (690, 246)], fill=INK, width=2)
     draw.ellipse([688, 242, 696, 250], fill=INK)
 
@@ -387,66 +511,66 @@ def draw_header(draw: ImageDraw.ImageDraw, today: str) -> None:
     draw.text((782, 176), "verified papers", font=small_font, fill=MUTED)
 
 
-def draw_item(img: Image.Image, draw: ImageDraw.ImageDraw, item: dict, idx: int, y: int) -> int:
+def draw_item(img: Image.Image, draw: ScaledDraw, item: dict, idx: int, y: int) -> int:
     num_font = load_font(42, "serif")
-    title_font = load_font(28, "bold")
-    meta_font = load_font(20, "body")
-    summary_font = load_font(21, "body")
-    tier_font = load_font(22, "bold")
+    title_font = load_font(30, "bold")
+    meta_font = load_font(21, "body")
+    summary_font = load_font(23, "body")
+    tier_font = load_font(21, "bold")
 
     left_x = MARGIN_X
     line_x = left_x + 78
     content_x = left_x + 112
     row_w = WIDTH - content_x - MARGIN_X
-    row_h = 166
+    row_h = 182
 
     draw.text((left_x, y + 14), f"{idx:02d}", font=num_font, fill=GREEN)
-    draw.line([(line_x, y + 8), (line_x, y + row_h - 16)], fill=HAIRLINE, width=2)
+    draw.line([(line_x, y + 8), (line_x, y + row_h - 16)], fill=HAIRLINE, width=1)
     draw.ellipse([line_x - 5, y + 80, line_x + 5, y + 90], fill=GREEN)
 
     tier = str(item.get("provenance_tier", "T?"))[:2]
     tier_color = TIER_COLORS.get(tier, GREY)
-    pill = [content_x, y + 12, content_x + 58, y + 48]
+    pill = [content_x, y + 11, content_x + 62, y + 49]
     paste_smooth_rounded_rectangle(img, pill, 18, fill=tier_color)
     draw.text(
-        (pill[0] + (58 - text_w(tier_font, tier)) / 2, pill[1] + 5),
+        ((pill[0] + pill[2]) / 2, (pill[1] + pill[3]) / 2 - 1),
         tier,
         font=tier_font,
         fill=(255, 255, 255),
+        anchor="mm",
     )
 
     title_x = content_x + 82
-    title = sanitize_text(item.get("title", "(untitled)"))
-    title_lines = wrap_text(title, title_font, row_w - 82, max_lines=2)
-    ty = y + 8
+    title = item.get("title", "(untitled)")
+    title_lines = wrap_text(title, title_font, row_w - 82, max_lines=2, role="bold")
+    ty = y + 6
     for line in title_lines:
         draw.text((title_x, ty), line, font=title_font, fill=INK)
-        ty += 34
+        ty += 36
 
-    source = item.get("corresponding_source") or "arXiv"
-    meta = f"{item.get('published_date', '')}  |  {fmt_authors(item.get('authors', []))}  |  score {item.get('relevance_score', '')}  |  {source}"
-    draw.text((title_x, y + 82), ellipsize(meta, meta_font, row_w - 82), font=meta_font, fill=MUTED)
+    source = image_text(item.get("corresponding_source") or "arXiv", role="body")
+    meta = f"{item.get('published_date', '')}  |  {fmt_authors(item.get('authors', []), role='body')}  |  score {item.get('relevance_score', '')}  |  {source}"
+    draw.text((title_x, y + 84), ellipsize(meta, meta_font, row_w - 82), font=meta_font, fill=MUTED)
 
-    summary = short_summary(item.get("abstract", ""))
-    summary_lines = wrap_text(summary, summary_font, row_w - 20, max_lines=1)
-    sy = y + 114
+    summary = short_summary(item.get("abstract", ""), role="body")
+    summary_lines = wrap_text(summary, summary_font, row_w - 8, max_lines=2, role="body")
+    sy = y + 118
     for line in summary_lines:
-        draw.text((content_x, sy), line, font=summary_font, fill=(119, 119, 112))
-        sy += 28
+        draw.text((content_x, sy), line, font=summary_font, fill=MUTED)
+        sy += 29
 
-    draw.line([(MARGIN_X, y + row_h), (WIDTH - MARGIN_X, y + row_h)], fill=HAIRLINE, width=2)
-    return y + row_h + 28
+    draw.line([(MARGIN_X, y + row_h), (WIDTH - MARGIN_X, y + row_h)], fill=HAIRLINE, width=1)
+    return y + row_h + 18
 
 
 def render_pil(top: list[dict], today: str) -> list[Path]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    img = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
-    add_paper_texture(img)
-    draw = ImageDraw.Draw(img)
+    img = Image.new("RGB", (WIDTH * RENDER_SCALE, HEIGHT * RENDER_SCALE), PAPER)
+    draw = ScaledDraw(img)
 
     draw_header(draw, today)
 
-    y = 470
+    y = 448
     for idx, item in enumerate(top, 1):
         y = draw_item(img, draw, item, idx, y)
 
@@ -457,13 +581,17 @@ def render_pil(top: list[dict], today: str) -> list[Path]:
 
     note_font = load_font(20, "body")
     note = ui_text(
-        "完整链接见配套 digest.txt  |  tier 与相关性均由规则管线判定",
-        "Full links in digest.txt  |  tier and relevance are rule-based",
+        "完整链接见配套微信短版  |  tier 与相关性均由规则管线判定",
+        "Full links in compact text  |  tier and relevance are rule-based",
+        role="body",
     )
     draw.text((MARGIN_X, HEIGHT - 34), note, font=note_font, fill=MUTED)
 
+    resample = getattr(Image, "Resampling", Image).LANCZOS
+    img = img.resize((WIDTH, HEIGHT), resample, reducing_gap=3.0)
+    add_paper_texture(img)
     out = OUTPUT_DIR / "perovskite-scout-card.png"
-    img.save(out)
+    img.save(out, optimize=True)
     return [out]
 
 
@@ -476,7 +604,7 @@ def render_html(top: list[dict], today: str) -> list[Path]:
             "<section class='item'>"
             f"<div class='num'>{idx:02d}</div>"
             f"<div class='body'><span class='tier' style='background:{color}'>{html.escape(tier)}</span>"
-            f"<h2>{html.escape(sanitize_text(item.get('title', '(untitled)')))}</h2>"
+            f"<h2>{html.escape(image_text(item.get('title', '(untitled)'), role='bold'))}</h2>"
             f"<p class='meta'>{html.escape(item.get('published_date', ''))} | "
             f"{html.escape(fmt_authors(item.get('authors', [])))} | "
             f"score {html.escape(str(item.get('relevance_score', '')))}</p>"
@@ -488,8 +616,8 @@ def render_html(top: list[dict], today: str) -> list[Path]:
     for it in ind_top:
         ind_cards.append(
             "<section class='item ind'>"
-            f"<div class='src'>{html.escape(it.get('source_name', ''))}</div>"
-            f"<h3>{html.escape(sanitize_text(it.get('title', '(untitled)')))}</h3>"
+            f"<div class='src'>{html.escape(image_text(it.get('source_name', ''), role='body'))}</div>"
+            f"<h3>{html.escape(image_text(it.get('title', '(untitled)'), role='bold'))}</h3>"
             f"<p class='meta'>{html.escape(it.get('published_date', ''))} | "
             f"{html.escape(it.get('url', ''))}</p></section>"
         )
@@ -510,11 +638,11 @@ def render_html(top: list[dict], today: str) -> list[Path]:
         ".industry-h{color:#315f4a;font-size:30px;margin:40px 0 10px}"
         ".foot{margin-top:32px;color:#315f4a}"
         "</style></head><body><main class='wrap'>"
-        f"<div class='rule'><span class='digest'>Research Digest</span></div><h1>{ui_text('钙钛矿情报雷达', 'Perovskite Scout')}</h1>"
+        f"<div class='rule'><span class='digest'>Research Digest</span></div><h1>{ui_text('钙钛矿情报雷达', 'Perovskite Scout', role='title')}</h1>"
         f"<div class='under'></div><div class='top'>Top 5 / {html.escape(today)}</div>"
         + "".join(cards)
-        + (f"<div class='industry-h'>{ui_text('产业动态', 'Industry Signals')}</div>" + "".join(ind_cards) if ind_cards else "")
-        + f"<div class='foot'>source verified | {ui_text('完整链接见配套 digest.txt', 'Full links in digest.txt')}</div></main></body></html>"
+        + (f"<div class='industry-h'>{ui_text('产业动态', 'Industry Signals', role='title')}</div>" + "".join(ind_cards) if ind_cards else "")
+        + f"<div class='foot'>source verified | {ui_text('完整链接见配套微信短版', 'Full links in compact text', role='body')}</div></main></body></html>"
     )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUTPUT_DIR / "perovskite-scout-card.html"
@@ -524,6 +652,7 @@ def render_html(top: list[dict], today: str) -> list[Path]:
 
 def clean_old_outputs() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
     for pat in (
         "perovskite-scout-card.png",
         "perovskite-scout-card-part-*.png",
@@ -532,8 +661,10 @@ def clean_old_outputs() -> None:
         for old in OUTPUT_DIR.glob(pat):
             try:
                 old.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                failures.append(f"{old}: {exc}")
+    if failures:
+        raise RuntimeError("旧卡片清理失败，拒绝混用新旧产物: " + "; ".join(failures))
 
 
 def main() -> int:

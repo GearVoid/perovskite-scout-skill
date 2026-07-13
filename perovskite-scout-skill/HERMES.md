@@ -13,7 +13,7 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]  # 手动全链路
 
 ## 产物
 
-`output/delivery/message.txt`（文本）、`output/delivery/card.png`（图片）、`output/delivery/delivery-manifest.json`（决策依据）。
+`output/delivery/message.txt`（兼容长版）、`output/delivery/message-compact.txt`（微信优先短版）、`output/delivery/card.png`（图片）、`output/delivery/delivery-manifest.json`（决策依据）。
 
 ## 红线（不可违反）
 

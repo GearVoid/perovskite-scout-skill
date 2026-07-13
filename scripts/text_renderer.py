@@ -3,6 +3,7 @@
 输入: feed-papers.json (+ rejected-papers.json 用于 footer 的过滤计数)
 输出: stdout (可直接复制到微信) + output/perovskite-scout-digest.txt
       正文超过 3500 字时自动分页: output/perovskite-scout-digest-part-N.txt
+      微信链接伴侣短版: output/perovskite-scout-digest-compact.txt
 
 约束 (MVP 红线):
   - 不调用 LLM: 摘要用 abstract 前 180 字符截断
@@ -26,6 +27,9 @@ TOP_N = 5            # 简报展示的重点条数 (可调)
 TOP_MIN_SCORE = 0.7   # 重点条门槛: 仅 score >= 此值的进 Top; 不足则补余下最高分
 SUMMARY_CHARS = 180  # 一句话摘要截断字符数
 INDUSTRY_TOP_N = 5   # 产业动态区展示条数 (文本可多放, 图片只放 2)
+COMPACT_INDUSTRY_TOP_N = 2  # 短版与图片产业区保持一致
+COMPACT_TITLE_CHARS = 118   # 长英文标题在微信里最多占两到三行
+COMPACT_LIMIT = 2800        # 为微信单条消息预留投递头部余量
 PAGE_LIMIT = 3500    # 单页最大字符数, 超出自动分页
 
 
@@ -92,6 +96,58 @@ def render_industry_item(it: dict) -> str:
     ])
 
 
+def compact_title(value: str | None) -> str:
+    """为微信短版截断标题；URL 保持完整，确保仍可点击。"""
+    title = sanitize_text(value or "(无标题)")
+    if len(title) > COMPACT_TITLE_CHARS:
+        return title[:COMPACT_TITLE_CHARS].rstrip() + "…"
+    return title
+
+
+def render_compact_digest(
+    top: list[dict],
+    industry_items: list[dict],
+    today: str,
+    papers_count: int,
+    industry_count: int,
+) -> str:
+    """渲染微信短版：摘要留在图片，文本专注于可点击的原始链接。
+
+    top 与 industry_items 均由本模块既有确定性排序结果传入；这里不重新
+    判定 tier、relevance 或入选资格，也不调用 LLM。
+    """
+    industry_top = industry_items[:COMPACT_INDUSTRY_TOP_N]
+    lines = [
+        f"钙钛矿情报雷达｜{today}",
+        f"论文 {papers_count} 条 · 产业 {industry_count} 条",
+        "看图读摘要，文字点链接。",
+    ]
+
+    if top:
+        lines.extend(["", f"论文 Top {len(top)}"])
+        for idx, it in enumerate(top, 1):
+            tier = it.get("provenance_tier", "?")
+            lines.extend([
+                f"{idx}. [{tier}] {compact_title(it.get('title'))}",
+                str(it.get("url", "")),
+            ])
+
+    lines.extend(["", f"产业动态 Top {len(industry_top)}"])
+    if industry_top:
+        for idx, it in enumerate(industry_top, 1):
+            tier = it.get("provenance_tier", "?")
+            source = sanitize_text(it.get("source_name", ""))
+            lines.extend([
+                f"{idx}. [{tier}] {source}｜{compact_title(it.get('title'))}",
+                str(it.get("url", "")),
+            ])
+    else:
+        lines.append("（本期无行业动态）")
+
+    lines.extend(["", "完整摘要见长版文本；tier 与相关性均由规则管线判定。"])
+    return "\n".join(lines).strip()
+
+
 def main() -> int:
     safe_reconfigure_stdout()  # Windows GBK 终端下避免打印中文/特殊符号时崩溃
     if not FEED_PATH.exists():
@@ -136,12 +192,15 @@ def main() -> int:
 
     # ---- 产业动态区 ----
     blocks.append(f"产业动态 (Top {INDUSTRY_TOP_N})")
+    industry_all: list[dict] = []
     industry_items: list[dict] = []
     if INDUSTRY_FEED_PATH.exists():
         try:
             ifeed = json.load(open(INDUSTRY_FEED_PATH, encoding="utf-8"))
-            industry_items = sort_industry(ifeed.get("items", []))[:INDUSTRY_TOP_N]
+            industry_all = sort_industry(ifeed.get("items", []))
+            industry_items = industry_all[:INDUSTRY_TOP_N]
         except Exception:
+            industry_all = []
             industry_items = []
     if industry_items:
         for it in industry_items:
@@ -174,7 +233,11 @@ def main() -> int:
             pages[-1] = last + footer
 
     # 清理旧的分页产物, 避免投递错文件
-    for pat in ("perovskite-scout-digest.txt", "perovskite-scout-digest-part-*.txt"):
+    for pat in (
+        "perovskite-scout-digest.txt",
+        "perovskite-scout-digest-part-*.txt",
+        "perovskite-scout-digest-compact.txt",
+    ):
         for old in OUTPUT_DIR.glob(pat):
             try:
                 old.unlink()
@@ -194,6 +257,17 @@ def main() -> int:
             po = OUTPUT_DIR / f"perovskite-scout-digest-part-{i}.txt"
             po.write_text(p, encoding="utf-8")
             page_files.append(po)
+
+    compact = render_compact_digest(
+        top=top,
+        industry_items=industry_all,
+        today=today,
+        papers_count=len(items_sorted),
+        industry_count=len(industry_all),
+    )
+    compact_out = OUTPUT_DIR / "perovskite-scout-digest-compact.txt"
+    compact_out.write_text(compact, encoding="utf-8")
+    page_files.append(compact_out)
 
     # 控制台输出 (可直接复制)
     print("=" * 44)

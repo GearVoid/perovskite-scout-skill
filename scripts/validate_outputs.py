@@ -18,12 +18,21 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
-from text_renderer import TOP_N, TOP_MIN_SCORE  # 复用排序逻辑
+from text_renderer import (  # 复用确定性排序与短版渲染逻辑
+    COMPACT_LIMIT,
+    TOP_MIN_SCORE,
+    TOP_N,
+    render_compact_digest,
+    sort_industry,
+)
 from text_utils import safe_reconfigure_stdout  # noqa: E402
 from enrich_metadata import load_openalex_mailto  # noqa: E402
 from feed_dedup import build_signatures, is_dup_of_papers  # noqa: E402
+from relevance_filter import filter_industry_item, filter_item  # noqa: E402
+from image_renderer import HEIGHT as CARD_HEIGHT, WIDTH as CARD_WIDTH  # noqa: E402
 
 ENRICH_CONFIG = BASE / "config" / "enrich.json"
+INDUSTRY_CONFIG = BASE / "config" / "sources-industry.json"
 
 FEED = BASE / "feed-papers.json"
 REJECTED = BASE / "rejected-papers.json"
@@ -67,6 +76,7 @@ def sort_top(items: list) -> list:
 
 def main() -> int:
     safe_reconfigure_stdout()  # Windows GBK 终端下避免打印中文/特殊符号时崩溃
+    results.clear()
     # 定时投递场景下, 某周 arXiv/行业可能确实无新命中 (feed 合法为空)。
     # 设 ALLOW_EMPTY_FEED=1 时, 把两个「非空」硬检查降级为通过, 避免安静周卡住投递;
     # 其它所有检查 (字段/乱码/tier/跨 feed 去重/卡片) 仍严格。默认 (未设) 保持开发态严格。
@@ -82,6 +92,14 @@ def main() -> int:
         try:
             feed = json.load(open(FEED, encoding="utf-8"))
             feed_items = feed.get("items", [])
+            declared_count = feed.get("count")
+            count_ok = (
+                type(declared_count) is int
+                and declared_count >= 0
+                and declared_count == len(feed_items)
+            )
+            check("feed count 与 items 一致", count_ok,
+                  f"count={declared_count} items={len(feed_items)}")
             if ALLOW_EMPTY_FEED and not feed_items:
                 check("feed 合法 JSON 且非空", True, "允许为空(定时模式)")
             else:
@@ -106,6 +124,26 @@ def main() -> int:
                 or not (0 <= it["relevance_score"] <= 1)
             ]
             check("relevance_score ∈ [0,1]", not score_bad, f"异常: {score_bad[:3]}")
+
+            relevance_bad = []
+            for it in feed_items:
+                judged = filter_item(it)
+                actual = (
+                    it.get("keep"),
+                    it.get("relevance_score"),
+                    it.get("relevance_reason"),
+                    it.get("reject_reason"),
+                )
+                expected = (
+                    judged.get("keep"),
+                    judged.get("relevance_score"),
+                    judged.get("relevance_reason"),
+                    judged.get("reject_reason"),
+                )
+                if actual != expected:
+                    relevance_bad.append(it.get("id"))
+            check("paper relevance 由 relevance_filter 判定", not relevance_bad,
+                  f"不符: {relevance_bad[:3]}")
 
             # ---- enrich 字段存在性 (允许 null, 但不允许缺失) ----
             ENRICH_KEYS = ["doi", "openalex_id", "institutions",
@@ -150,6 +188,14 @@ def main() -> int:
         try:
             ifeed = json.load(open(FEED_INDUSTRY, encoding="utf-8"))
             industry_items = ifeed.get("items", [])
+            ideclared_count = ifeed.get("count")
+            icount_ok = (
+                type(ideclared_count) is int
+                and ideclared_count >= 0
+                and ideclared_count == len(industry_items)
+            )
+            check("feed-industry count 与 items 一致", icount_ok,
+                  f"count={ideclared_count} items={len(industry_items)}")
             if ALLOW_EMPTY_FEED and not industry_items:
                 check("feed-industry 合法 JSON 且非空", True, "允许为空(定时模式)")
             else:
@@ -158,7 +204,8 @@ def main() -> int:
 
             IREQ = ["id", "title", "url", "source_id", "source_name", "source_type",
                     "source_domain", "provenance_tier", "provenance_subtier",
-                    "type", "published_date", "summary", "authors", "keep", "doi"]
+                    "type", "published_date", "summary", "authors", "keep", "doi",
+                    "relevance_score", "relevance_reason", "reject_reason"]
             imiss = [it.get("id") for it in industry_items if not all(k in it for k in IREQ)]
             check("feed-industry 每条含必需字段", not imiss, f"缺: {imiss[:3]}")
 
@@ -183,6 +230,44 @@ def main() -> int:
                 if not isinstance(it.get("doi"), (str, type(None)))
             ]
             check("industry doi 字段合法(str/None)", not idoi_bad, f"异常: {idoi_bad[:3]}")
+
+            source_terms: dict[str, list[str]] = {}
+            try:
+                iconfig = json.load(open(INDUSTRY_CONFIG, encoding="utf-8"))
+                source_terms = {
+                    str(src.get("id")): list(src.get("query_terms", []))
+                    for src in iconfig.get("sources", [])
+                }
+                check("industry relevance 配置可读取", True)
+            except Exception as exc:  # noqa: BLE001
+                check("industry relevance 配置可读取", False, str(exc))
+
+            irelevance_bad = []
+            unknown_sources = []
+            for it in industry_items:
+                source_id = str(it.get("source_id"))
+                if source_id not in source_terms:
+                    unknown_sources.append(source_id)
+                    continue
+                judged = filter_industry_item(it, source_terms[source_id])
+                actual = (
+                    it.get("keep"),
+                    it.get("relevance_score"),
+                    it.get("relevance_reason"),
+                    it.get("reject_reason"),
+                )
+                expected = (
+                    judged.get("keep"),
+                    judged.get("relevance_score"),
+                    judged.get("relevance_reason"),
+                    judged.get("reject_reason"),
+                )
+                if actual != expected:
+                    irelevance_bad.append(it.get("id"))
+            check("industry source_id 均在 relevance 配置中", not unknown_sources,
+                  f"未知: {unknown_sources[:3]}")
+            check("industry relevance 由 relevance_filter 判定", not irelevance_bad,
+                  f"不符: {irelevance_bad[:3]}")
 
             igarble = [
                 it.get("id")
@@ -216,8 +301,12 @@ def main() -> int:
 
     # ---- digest ----
     digest = OUTPUT / "perovskite-scout-digest.txt"
+    digest_date: str | None = None
     if digest.exists():
         t = digest.read_text(encoding="utf-8")
+        digest_date_match = re.match(r"钙钛矿情报雷达 (\d{4}-\d{2}-\d{2})", t)
+        digest_date = digest_date_match.group(1) if digest_date_match else None
+        check("digest 日期头合法", bool(digest_date), t.splitlines()[0][:40] if t else "")
         dtop = re.findall(r"\[T[1-4]\] (.+)", t)[:TOP_N]
         expected = [it["title"] for it in top]
         check("digest Top5 与 feed 一致", dtop == expected,
@@ -234,22 +323,70 @@ def main() -> int:
     else:
         check("digest.txt 存在", False)
 
+    # ---- 微信 compact 文本 ----
+    compact_path = OUTPUT / "perovskite-scout-digest-compact.txt"
+    if compact_path.exists():
+        compact = compact_path.read_text(encoding="utf-8")
+        check("compact 文本非空", bool(compact.strip()))
+        check("compact 文本长度适合微信", len(compact) <= COMPACT_LIMIT,
+              f"chars={len(compact)} limit={COMPACT_LIMIT}")
+        check("compact 文本无乱码(U+FFFD)", "\ufffd" not in compact)
+
+        first = compact.splitlines()[0] if compact.splitlines() else ""
+        date_match = re.fullmatch(r"钙钛矿情报雷达｜(\d{4}-\d{2}-\d{2})", first)
+        check("compact 日期头合法", bool(date_match), first[:40])
+        if date_match:
+            check("compact 与长版日期一致", date_match.group(1) == digest_date,
+                  f"compact={date_match.group(1)} digest={digest_date}")
+            expected_compact = render_compact_digest(
+                top=top,
+                industry_items=sort_industry(industry_items),
+                today=date_match.group(1),
+                papers_count=len(feed_items),
+                industry_count=len(industry_items),
+            )
+            check("compact 与 feed 排序/链接一致", compact.strip() == expected_compact)
+    else:
+        check("compact 文本存在", False)
+
     # ---- card ----
     png = OUTPUT / "perovskite-scout-card.png"
     parts = sorted(OUTPUT.glob("perovskite-scout-card-part-*.png"))
     html = OUTPUT / "perovskite-scout-card.html"
     card_ok = png.exists() or bool(parts) or html.exists()
     check("card 产物存在 (png/html)", card_ok)
+    variants = int(png.exists()) + int(bool(parts)) + int(html.exists())
+    check("card 格式产物互斥", variants <= 1, f"png={png.exists()} parts={len(parts)} html={html.exists()}")
     if png.exists():
         try:
             from PIL import Image
 
-            im = Image.open(png)
-            check("card PNG 宽 1080", im.size[0] == 1080, f"size={im.size}")
-        except Exception:  # noqa: BLE001
-            pass
+            with Image.open(png) as im:
+                im.verify()
+            with Image.open(png) as im:
+                check("card PNG 可读取", True, f"mode={im.mode}")
+                check("card PNG 尺寸正确", im.size == (CARD_WIDTH, CARD_HEIGHT),
+                      f"size={im.size}")
+        except Exception as exc:  # noqa: BLE001
+            check("card PNG 可读取", False, str(exc))
+    for part in parts:
+        try:
+            from PIL import Image
+
+            with Image.open(part) as im:
+                im.verify()
+            with Image.open(part) as im:
+                size_ok = im.size[0] == CARD_WIDTH and im.size[1] >= 200
+                check(f"card part 可读取且尺寸合理 ({part.name})", size_ok,
+                      f"size={im.size}")
+        except Exception as exc:  # noqa: BLE001
+            check(f"card part 可读取且尺寸合理 ({part.name})", False, str(exc))
     if html.exists():
-        check("card html 无乱码(U+FFFD)", "\ufffd" not in html.read_text(encoding="utf-8"))
+        html_text = html.read_text(encoding="utf-8")
+        html_lower = html_text.lower()
+        check("card html 结构完整", bool(html_text.strip())
+              and "<html" in html_lower and "</html>" in html_lower)
+        check("card html 无乱码(U+FFFD)", "\ufffd" not in html_text)
 
     # ---- OpenAlex mailto 配置 ----
     configured = os.environ.get("OPENALEX_MAILTO") or (

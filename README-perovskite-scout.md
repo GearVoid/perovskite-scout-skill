@@ -33,14 +33,14 @@ python scripts/deliver.py [--mode production|preview] [--transport local|webhook
 pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 ```
 
-未安装 Pillow 时，`image_renderer` 自动退回生成 `output/perovskite-scout-card.html`，其余环节不受影响，不会报错卡住。
+未安装 Pillow 时，`image_renderer` 可生成 HTML 供人工预览；但个人微信 `deliver.py` 的 `ready` 契约必须有 PNG，因此生产投递需安装 Pillow。
 
 ---
 
 ## 运行环境
 
 - 任意 **Python 3.10+** 解释器即可；本地用系统 `python` 或项目托管 Python 都可。
-- **openclaw 部署时，由运行环境自带的 Python 执行 `run_pipeline.py`**，无需在仓库里固化解释器路径。
+- **openclaw 部署时，由运行环境自带的 Python 执行 `deliver.py`**，确保校验、manifest 与投递门禁全部生效。
 - 终端编码问题：脚本会在入口把 stdout/stderr 重设为 UTF-8（errors=replace），即使 Windows GBK 控制台也不会因中文/希腊字母/下标符号崩溃。
 
 ---
@@ -60,13 +60,13 @@ pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 
 | transport | 行为 |
 |-----------|------|
-| `local`（默认） | 校验全绿后把投递包写到 `output/delivery/`：`message.txt`（微信文本正文）+ `card.png`（图片卡片副本）+ `delivery-manifest.json`（元数据）。**openclaw 侧只需读这两个文件推到个人微信** |
-| `webhook` | 若环境变量 `$DELIVERY_WEBHOOK` 存在，把 `{text, image_path, manifest}` 以 JSON POST 出去（用于你已有 HTTP 推送端点的场景）；未配置则退回 `local` |
+| `local`（默认） | 校验全绿后写入长版 `message.txt`、微信短版 `message-compact.txt`、`card.png` 与 manifest。新消费者优先发短版，旧消费者路径不变 |
+| `webhook` | 保留 `{text, image_path, manifest}`，并新增 `compact_text` 与扁平契约字段；未配置则退回 `local` |
 
 ### 安全红线（已守住）
 
-- **校验不全绿，绝不投递**：`validate_outputs.py` 任一检查失败即终止，避免把坏数据推到你微信。
-- **安静周自动跳过**：`production` 模式下若本轮论文与行业都为空（无新增），写入 `delivery-manifest.json`（`status: skipped`）并清掉上次的 `message.txt`/`card.png`，**不会发一条空消息刷屏**；同时 `output/delivery/` 只在没有可投内容时为空，openclaw 用「看到文件就发」规则也安全。
+- **校验不全绿，绝不投递**：`validate_outputs.py` 任一检查失败即写 `status: failed`、清理上一轮可发送文件并退出，避免旧 ready 包误发。
+- **安静周自动跳过**：`production` 模式下若本轮论文与行业都为空（无新增），写入 `status: skipped` 并清掉上次的长版、短版与卡片，**不会发旧内容或空消息**。
 - **定时模式容忍空 feed**：`deliver.py` 调用校验时自动设 `ALLOW_EMPTY_FEED=1`，把「feed 非空」从硬失败降级为通过；但字段/乱码/tier/跨 feed 去重/卡片/邮箱等检查仍严格。**手动跑 `validate_outputs.py`（不设该变量）仍保持非空硬要求**，开发与 CI 不被弱化。
 
 ### openclaw 定时任务接缝
@@ -74,7 +74,7 @@ pip install -r requirements-optional.txt   # 仅当需要 PNG 卡片
 openclaw 侧只需做两件事（本仓库不管凭证）：
 
 1. **定时触发**：例如每周一 09:00 执行 `python scripts/deliver.py`（不加 `--mode` 即生产模式）。
-2. **微信出口**：读取 `output/delivery/` 的 `message.txt` + `card.png`，通过 openclaw 的个人微信连接器发出；或设置 `$DELIVERY_WEBHOOK` 让 `deliver.py` 直接 POST。
+2. **微信出口**：优先读取 `message-compact.txt` + `card.png`；短版不存在时回退 `message.txt`。也可设置 `$DELIVERY_WEBHOOK` 直接 POST。
 
 > 官方 newsroom（html-monitor）、NREL 效率图（monitored-asset）、社交/博主层均**未做**，按计划等投递闭环先稳定跑 1–2 期再加。
 
@@ -103,12 +103,12 @@ export OPENALEX_MAILTO=you@example.com
 | 参数 | 行为 | 何时用 |
 |------|------|--------|
 | （默认，无参数） | 正常去重：已见过的 arXiv id 不再输出，只吐新增 | **每周定时跑的正确用法**，不要加任何参数 |
-| `--ignore-state` | 忽略去重判定，但**仍会更新** `state-feed.json`；本次把本轮抓到的全部论文当作新增输出 | 调试 / 想看本轮全部抓取结果（注意：下次默认跑不会再重复，因为 state 已记录） |
+| `--ignore-state` | 忽略去重判定且**不修改** state；本次把本轮抓到的全部内容输出 | 调试 / 看完整预览，不污染 production 去重记忆 |
 | `--rebuild` | 先清空 `state-feed.json` 再正常去重 = 从头生成 | 改了过滤规则后重置基线 |
 
 > 注意：`--rebuild` 会删除 `state-feed.json`（去重记忆）。改 `relevance_filter.py` 规则后用它重跑，才能看到新的过滤结果。
 >
-> 定时任务（openclaw）**只调用 `python scripts/run_pipeline.py`，不加任何参数**，由 `state-feed.json` 自动去重，避免每周重复投递。
+> 定时任务（openclaw）**只调用 `python scripts/deliver.py`，不加任何参数**。它会在校验或组包失败时回滚去重 state，避免未投递内容被提前“吃掉”。
 
 ---
 
@@ -121,12 +121,13 @@ export OPENALEX_MAILTO=you@example.com
 | `rejected-papers.json` | 被相关性过滤拒绝的论文 + `reject_reason`（审计用） |
 | `rejected-industry.json` | 未命中关键词 / fetch 失败 / 被跨 feed 去重剔除的行业条目 + `reject_reason` |
 | `output/perovskite-scout-digest.txt` | 纯文本简报，可直接复制到微信（含「产业动态」区） |
-| `output/perovskite-scout-card.png` | 微信图片卡片（Top5 + 产业动态 2 条，`1080px` 宽；需 Pillow） |
+| `output/perovskite-scout-digest-compact.txt` | 微信短版（Top5 + 产业 Top2 标题与完整链接） |
+| `output/perovskite-scout-card.png` | 微信图片卡片（Top5 + 产业动态 2 条，`1080px` 宽；2× 超采样；需 Pillow） |
 | `output/perovskite-scout-card.html` | 无 Pillow 时的图片卡片回退产物 |
 | `state-feed.json` | 论文去重状态（已见 arXiv id），勿手动编辑 |
 | `state-industry.json` | 行业源去重状态（已见标题/URL），勿手动编辑 |
 
-`digest.txt` 含完整链接；`card.png` 为排版美观**不放链接**，二者组合发出即"图片 + 文本"的微信呈现。
+`digest-compact.txt` 是卡片的链接伴侣；`card.png` 为排版美观**不放链接**。长版仍保留完整摘要与更多产业动态。
 
 ---
 
@@ -137,25 +138,25 @@ config/sources.json          # 数据源（当前仅 arXiv）
 config/sources-industry.json # 行业源（type: rss/html-monitor; source_type: curated-media/official-newsroom）
 config/enrich.json           # OpenAlex 联系邮箱等 enrich 配置
 scripts/discover_papers.py   # 抓取 + 去重（含 429 退避重试 + 文本清洗）
-scripts/discover_industry.py # 行业源 RSS 抓取 + 轻量关键词 gate + 机器判 tier/subtier
+scripts/discover_industry.py # 行业源 RSS 抓取；调用统一 relevance/tier 规则入口
 scripts/feed_dedup.py        # 跨 feed 去重（论文 vs 行业, 按 归一标题/URL/DOI）
-scripts/relevance_filter.py  # v2 相关性过滤（探测器硬拒 / 多铁降权）
+scripts/relevance_filter.py  # 论文 + 产业相关性唯一判定入口
 scripts/tier_mapper.py       # 机器可信度分级 T1-T4
 scripts/enrich_metadata.py   # Crossref/OpenAlex 字段补全（只补字段, 不新增发现源）
-scripts/text_renderer.py     # 纯文本简报（含「产业动态」区）
-scripts/image_renderer.py    # 微信图片卡片（Top5 + 产业动态 2 条; Pillow / HTML fallback）
+scripts/text_renderer.py     # 长版 + 微信 compact 文本（含「产业动态」区）
+scripts/image_renderer.py    # 2× 超采样微信卡片（Top5 + 产业动态 2 条; Pillow / HTML fallback）
 scripts/text_utils.py        # 共享文本卫生（防乱码 / 终端 UTF-8 重设）
 scripts/run_pipeline.py      # 一键串联（论文 → 行业 → 跨 feed 去重 → 渲染）
-scripts/validate_outputs.py  # 产出校验（含 feed-industry 与跨 feed 去重项）
+scripts/validate_outputs.py  # 产出校验（含 tier/relevance 复算、compact、PNG 完整性）
 scripts/deliver.py           # 投递闭环（跑管线→校验→组装投递包→推出口；production/preview + local/webhook）
 requirements-optional.txt    # 仅 Pillow
 ```
 
-`output/delivery/`：投递产物目录（由 `deliver.py` 生成）。`message.txt`（微信文本正文）+ `card.png`（图片卡片副本）+ `delivery-manifest.json`（模式/时间/各 feed 条数/状态）。openclaw 读取此目录即可推到个人微信。
+`output/delivery/`：投递产物目录（由 `deliver.py` 生成）。保留兼容长版 `message.txt`，新增推荐发送的 `message-compact.txt`，再加 `card.png` 与带明确 `status` 的 manifest。
 
 > **两条主线 + 跨 feed 去重**：`feed-papers.json`（论文）与 `feed-industry.json`（行业）刻意分开，避免把行业媒体混进科研结论。管线在 `discover_industry` 之后自动做跨 feed 去重——同一主体（如 Oxford PV）既发论文又发公告时，行业条目若与论文的**归一标题 / URL / DOI** 任一相同即被剔除，不会在微信里重复出现。标题相似度（模糊匹配）留到后续阶段。
 >
-> **微信图文分区**：`digest.txt` 与 `card.png` 均分为「Top 5 论文」+「产业动态」两段。文本最多放 5 条产业动态；图片为保持克制感只放 2 条。
+> **微信图文分区**：长版最多放 5 条产业动态；compact 与图片保持 Top5 论文 + 产业 Top2。图片读摘要，短版负责可点击链接。
 
 ---
 

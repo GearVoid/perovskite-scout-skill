@@ -29,6 +29,7 @@ BASE = Path(__file__).resolve().parent.parent
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 from text_utils import sanitize_text, safe_reconfigure_stdout  # noqa: E402
+from relevance_filter import filter_industry_item  # noqa: E402
 from tier_mapper import tier_for_url  # noqa: E402
 
 CONFIG = BASE / "config" / "sources-industry.json"
@@ -131,19 +132,6 @@ def parse_date(s: str) -> str:
         return ""
 
 
-# --------------------------------------------------------------------------- #
-# 过滤 / 去重
-# --------------------------------------------------------------------------- #
-def passes_gate(item: dict, terms: list[str]) -> tuple[bool, str]:
-    if not terms:
-        return True, "source-curated (no gate)"
-    hay = (item["title"] + " " + item["summary"]).lower()
-    for t in terms:
-        if t.lower() in hay:
-            return True, f"keyword-match: {t}"
-    return False, "no keyword match"
-
-
 def norm_title(t: str) -> str:
     t = (t or "").lower()
     t = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", t)
@@ -164,7 +152,7 @@ def main() -> int:
     ap.add_argument("--rebuild", action="store_true",
                     help="清空 state-industry.json 后重新抓取(重置去重基线)")
     ap.add_argument("--ignore-state", action="store_true",
-                    help="忽略去重(仍会更新 state), 产出本轮全部抓取")
+                    help="忽略去重且不修改 state, 产出本轮全部抓取")
     args = ap.parse_args()
 
     if not CONFIG.exists():
@@ -224,16 +212,19 @@ def main() -> int:
         for it in items:
             if not it["url"] and not it["title"]:
                 continue
-            ok, reason = passes_gate(it, terms)
+            # 先固定最终可审计文本，再由 relevance_filter 单一入口判定。
+            candidate = dict(it)
+            candidate["summary"] = it["summary"][:600]
+            judged = filter_industry_item(candidate, terms)
             tid = make_id(it["url"], it["title"])
             nt = norm_title(it["title"])
             dup = (nt in seen_titles or nt in now_titles or
                     (it["url"] and (it["url"] in seen_urls or it["url"] in now_urls)))
-            if not ok:
+            if not judged["keep"]:
                 rejected.append({
                     "id": tid, "source_id": src.get("id"),
                     "source_name": src.get("name"), "title": it["title"],
-                    "url": it["url"], "reject_reason": reason,
+                    "url": it["url"], "reject_reason": judged["reject_reason"],
                 })
                 continue
             if dup:
@@ -249,7 +240,7 @@ def main() -> int:
                 "id": tid,
                 "title": it["title"],
                 "url": it["url"],
-                "summary": it["summary"][:600],
+                "summary": judged["summary"],
                 "source_id": src.get("id"),
                 "source_name": src.get("name", src.get("id")),
                 "source_type": src.get("source_type"),
@@ -262,10 +253,10 @@ def main() -> int:
                 "published_date": it["published_date"],
                 "published_raw": it["published_raw"],
                 "authors": it["authors"],
-                "relevance_score": 1.0,
-                "relevance_reason": reason,
-                "reject_reason": None,
-                "keep": True,
+                "relevance_score": judged["relevance_score"],
+                "relevance_reason": judged["relevance_reason"],
+                "reject_reason": judged["reject_reason"],
+                "keep": judged["keep"],
                 "enriched": False,
             }
             kept.append(rec)

@@ -42,14 +42,15 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]
 
 | 路径 | 说明 |
 |------|------|
-| `output/delivery/message.txt` | 微信文本正文（可直接复制发送） |
-| `output/delivery/card.png` | 微信图片卡片（Top5 论文 + 产业动态 2 条，1080px 宽） |
+| `output/delivery/message.txt` | 兼容长版（可能超过微信单条长度，必要时分段） |
+| `output/delivery/message-compact.txt` | 微信短版（Top5 + 产业 Top2 的标题与可点击链接，推荐随图发送） |
+| `output/delivery/card.png` | 微信图片卡片（Top5 论文 + 产业动态 2 条，1080px 宽，2× 超采样） |
 | `output/delivery/delivery-manifest.json` | 投递决策依据（status 见下） |
 | `feed-papers.json` / `feed-industry.json` | 结构化数据（论文 / 产业两条主线） |
 
 `delivery-manifest.json` 的 `status` 取值与动作：
 
-- `ready` → 发 `card.png` + `message.txt`
+- `ready` → 优先发 `card.png` + `message-compact.txt`；旧消费者可继续发 `message.txt`
 - `skipped` → 本轮无新内容，**不发送**（旧文件已清空）
 - 命令退出码非 0 → 校验失败，**不发正文**，改发错误通知
 
@@ -66,7 +67,7 @@ python scripts/run_pipeline.py [--rebuild | --ignore-state]
 ## 引用（不要复制脚本）
 
 - `scripts/deliver.py` —— 唯一投递入口（production / preview，local / webhook）
-- `scripts/validate_outputs.py` —— 校验闸门（24 项）
+- `scripts/validate_outputs.py` —— 校验闸门（含 tier/relevance 复算、compact 与图片完整性）
 - `scripts/run_pipeline.py` —— 全链路串联
 - 详细设计：`references/perovskite-scout-spec.md`
 - 设计纪律 / 反漂移：`references/perovskite-scout-playbook.md`
